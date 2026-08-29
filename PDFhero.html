@@ -1695,6 +1695,275 @@
       }
     });
 
+    // ── PresenterModule — view lifecycle ─────────────────────────
+
+    const pdfCanvas        = document.getElementById('pdf-canvas');
+    const annotationCanvas = document.getElementById('annotation-canvas');
+    const presenterSection = document.getElementById('presenter');
+    const landingSection   = document.getElementById('landing');
+
+    /** Match annotation canvas size to the PDF canvas. */
+    function syncAnnotationCanvasSize() {
+      annotationCanvas.width  = pdfCanvas.width;
+      annotationCanvas.height = pdfCanvas.height;
+    }
+
+    /** Enter full-screen presenter view starting at the chosen page. */
+    async function enterPresenterView() {
+      if (!AppState.pdfJsDoc) return;
+
+      const raw = parseInt(document.getElementById('start-page-input').value, 10);
+      AppState.currentPage = Math.max(1, Math.min(isNaN(raw) ? 1 : raw, AppState.pageCount));
+
+      // Switch views
+      landingSection.style.display  = 'none';
+      presenterSection.classList.add('active');
+      AppState.isPresenting = true;
+
+      // Render the starting page
+      await renderPage(AppState.pdfJsDoc, AppState.currentPage, pdfCanvas);
+      syncAnnotationCanvasSize();
+      const ctx = annotationCanvas.getContext('2d');
+      redrawCanvas(ctx);
+
+      // Request fullscreen (failure is non-fatal)
+      try {
+        await document.documentElement.requestFullscreen();
+      } catch { /* continue without fullscreen */ }
+    }
+
+    /** Exit presenter view, record resume page, return to landing. */
+    function exitPresenterView() {
+      AppState.isPresenting = false;
+      AppState.resumePage   = AppState.currentPage;
+      document.getElementById('start-page-input').value = AppState.resumePage;
+
+      presenterSection.classList.remove('active');
+      landingSection.style.display = '';
+
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+
+    // Handle the user pressing Esc (native fullscreen exit)
+    document.addEventListener('fullscreenchange', () => {
+      if (!document.fullscreenElement && AppState.isPresenting) {
+        exitPresenterView();
+      }
+    });
+
+    // ── PresenterModule — page navigation ────────────────────────
+
+    async function navigatePage(delta) {
+      const next = AppState.currentPage + delta;
+      if (next < 1 || next > AppState.pageCount) return;
+      AppState.currentPage = next;
+      await renderPage(AppState.pdfJsDoc, AppState.currentPage, pdfCanvas);
+      syncAnnotationCanvasSize();
+      const ctx = annotationCanvas.getContext('2d');
+      ctx.clearRect(0, 0, annotationCanvas.width, annotationCanvas.height);
+      redrawCanvas(ctx);
+    }
+
+    // ── PresenterModule — keyboard shortcuts ─────────────────────
+
+    const SHORTCUT_ACTIONS = {
+      ArrowRight : () => navigatePage(+1),
+      ArrowLeft  : () => navigatePage(-1),
+      PageDown   : () => navigatePage(+1),
+      PageUp     : () => navigatePage(-1),
+      q          : () => exitPresenterView(),
+      Q          : () => exitPresenterView(),
+      e          : () => eraseAll(),
+      E          : () => eraseAll(),
+      u          : () => undo(),
+      U          : () => undo(),
+      z          : () => redo(),
+      Z          : () => redo(),
+      s          : () => captureScreenshot(pdfCanvas, annotationCanvas),
+      S          : () => captureScreenshot(pdfCanvas, annotationCanvas),
+    };
+
+    document.addEventListener('keydown', (event) => {
+      if (!AppState.isPresenting) return;
+      const action = SHORTCUT_ACTIONS[event.key];
+      if (action) {
+        event.preventDefault();
+        action();
+      }
+    });
+
+    // ── PresenterModule — pointer / cursor handling ───────────────
+
+    annotationCanvas.addEventListener('mousemove', (e) => {
+      annotationCanvas.style.cursor = 'crosshair';
+      if (AppState.activeStroke) {
+        continueStroke(e.offsetX, e.offsetY);
+      }
+    });
+
+    annotationCanvas.addEventListener('mousedown', (e) => {
+      annotationCanvas.style.cursor = 'none';
+      beginStroke(e.offsetX, e.offsetY);
+    });
+
+    annotationCanvas.addEventListener('mouseup', () => {
+      endStroke();
+      // cursor stays hidden after mouseup
+    });
+
+    // If the pointer is released outside the canvas, finalise any active stroke
+    // so it is not left dangling when the user re-enters the canvas.
+    window.addEventListener('mouseup', () => {
+      if (AppState.activeStroke) {
+        endStroke();
+      }
+    });
+
+    // Finalise an in-progress stroke if the cursor leaves the canvas mid-draw.
+    annotationCanvas.addEventListener('mouseleave', () => {
+      if (AppState.activeStroke) {
+        endStroke();
+      }
+    });
+
+    // ── ScreenshotModule ──────────────────────────────────────────
+
+    /**
+     * Composite pdf-canvas + annotation-canvas into a PNG Blob and store
+     * it in AppState.screenshotBuffer.  Enables #btn-download-screenshot.
+     * @param {HTMLCanvasElement} pdfCv
+     * @param {HTMLCanvasElement} annCv
+     */
+    async function captureScreenshot(pdfCv, annCv) {
+      try {
+        const w = pdfCv.width;
+        const h = pdfCv.height;
+        let blob;
+
+        if (typeof OffscreenCanvas !== 'undefined') {
+          const offscreen = new OffscreenCanvas(w, h);
+          const ctx = offscreen.getContext('2d');
+          ctx.drawImage(pdfCv, 0, 0);
+          ctx.drawImage(annCv, 0, 0);
+          blob = await offscreen.convertToBlob({ type: 'image/png' });
+        } else {
+          // Fallback for older browsers
+          const tmp = document.createElement('canvas');
+          tmp.width  = w;
+          tmp.height = h;
+          const ctx = tmp.getContext('2d');
+          ctx.drawImage(pdfCv, 0, 0);
+          ctx.drawImage(annCv, 0, 0);
+          blob = await new Promise((res) => tmp.toBlob(res, 'image/png'));
+        }
+
+        AppState.screenshotBuffer = blob;
+        AppState.screenshotPage   = AppState.currentPage;
+        document.getElementById('btn-download-screenshot').disabled = false;
+      } catch (err) {
+        showError(`Screenshot failed: ${err.message ?? err}`);
+      }
+    }
+
+    // ── SaveModule ────────────────────────────────────────────────
+
+    /**
+     * Embed all strokes as vector paths into the PDF and trigger download.
+     * @returns {Promise<void>}
+     */
+    async function saveWithAnnotations() {
+      if (!AppState.pdfBytes) {
+        showError('No PDF loaded.');
+        return;
+      }
+      try {
+        const { PDFDocument, rgb } = PDFLib;
+        const doc = await PDFDocument.load(AppState.pdfBytes);
+        const pages = doc.getPages();
+
+        for (const [pageNum, strokes] of AppState.strokes) {
+          if (!strokes || strokes.length === 0) continue;
+          const page = pages[pageNum - 1];
+          if (!page) continue;
+          const { width: pdfW, height: pdfH } = page.getSize();
+          // Canvas was rendered at scale 1.0, so canvas pixel dimensions equal
+          // PDF point dimensions for each page. Use pdfW/pdfH directly so that
+          // coordinate mapping is correct even for pages that are not currently
+          // rendered in pdfCanvas (e.g. saving from landing page, multi-page PDFs
+          // with different page sizes).
+          const cW = pdfW;
+          const cH = pdfH;
+
+          for (const stroke of strokes) {
+            if (stroke.points.length < 2) continue;
+            const pts = stroke.points.map(p => ({
+              x:  (p.x / cW) * pdfW,
+              y:  pdfH - (p.y / cH) * pdfH,   // flip y-axis
+            }));
+
+            // Build SVG-style path string
+            let d = `M ${pts[0].x} ${pts[0].y}`;
+            for (let i = 1; i < pts.length - 1; i++) {
+              const mx = (pts[i].x + pts[i + 1].x) / 2;
+              const my = (pts[i].y + pts[i + 1].y) / 2;
+              d += ` Q ${pts[i].x} ${pts[i].y} ${mx} ${my}`;
+            }
+            d += ` L ${pts[pts.length - 1].x} ${pts[pts.length - 1].y}`;
+
+            // Parse hex colour → rgb (default #FF0000)
+            const hex = (stroke.color ?? '#FF0000').replace('#', '');
+            const r = parseInt(hex.substring(0, 2), 16) / 255;
+            const g = parseInt(hex.substring(2, 4), 16) / 255;
+            const b = parseInt(hex.substring(4, 6), 16) / 255;
+
+            page.drawSvgPath(d, {
+              borderColor: rgb(r, g, b),
+              borderWidth: stroke.lineWidth ?? 3,
+              borderOpacity: 1,
+              opacity: 0,   // fill transparent
+            });
+          }
+        }
+
+        doc.setCreator('PDFhero by NoSocial.Net v1.01');
+        const bytes    = await doc.save();
+        const blob     = new Blob([bytes], { type: 'application/pdf' });
+        const url      = URL.createObjectURL(blob);
+        const a        = document.createElement('a');
+        a.href         = url;
+        a.download     = (AppState.originalFileName ?? 'document') + '-PDFhero.pdf';
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        showError(`Save failed: ${err.message ?? err}`);
+      }
+    }
+
+    /**
+     * Download the in-memory screenshot buffer as a PNG file.
+     */
+    function downloadScreenshot() {
+      if (!AppState.screenshotBuffer) return;
+      const url  = URL.createObjectURL(AppState.screenshotBuffer);
+      const a    = document.createElement('a');
+      a.href     = url;
+      const page = String(AppState.screenshotPage ?? 1).padStart(3, '0');
+      a.download = (AppState.originalFileName ?? 'document') + `-${page}-PDFhero.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // ── Main event wiring ─────────────────────────────────────────
+
+    document.getElementById('btn-present').addEventListener('click', enterPresenterView);
+    document.getElementById('btn-save').addEventListener('click', saveWithAnnotations);
+    document.getElementById('btn-download-screenshot').addEventListener('click', downloadScreenshot);
+
+    // Initialise pdfcpu WASM at startup (non-blocking)
+    initPdfcpu();
+
   </script>
 
 </body>

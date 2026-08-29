@@ -97,7 +97,7 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - **Validates: Requirements 4.2**
     - After `renderPage` completes, assert `pdf-canvas.width === pageViewport.width` and `annotation-canvas.width === pdf-canvas.width` (and same for height)
 
-- [ ] 6. Implement AnnotationModule
+- [x] 6. Implement AnnotationModule
   - [x] 6.1 Implement stroke begin / continue / end and canvas redraw
     - Implement `beginStroke(x, y)`: clear `redoStack` for current page, create new `Stroke` `{points:[{x,y}], color:'#FF0000', lineWidth:3}`, assign to `AppState.activeStroke`
     - Implement `continueStroke(x, y)`: push `{x,y}` to `activeStroke.points`; clear annotation canvas; call `redrawCanvas(ctx)` for all committed strokes; then draw active stroke using bezier algorithm
@@ -116,7 +116,7 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - **Validates: Requirements 5.6**
     - Spy on `CanvasRenderingContext2D.quadraticCurveTo`; for a stroke with ≥ 3 points, assert it is called at least once
 
-  - [~] 6.4 Implement `undo()`, `redo()`, and `eraseAll()`
+  - [x] 6.4 Implement `undo()`, `redo()`, and `eraseAll()`
     - `undo()`: if current-page history has ≥ 1 stroke, pop last stroke, push to redo stack, redraw canvas
     - `redo()`: if redo stack has ≥ 1 stroke, pop from redo stack, push to history, redraw canvas
     - `eraseAll()`: clear history and redo stack for current page, clear annotation canvas
@@ -134,8 +134,8 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - **Property 8: Erase Clears All Annotation State**
     - **Validates: Requirements 6.1**
 
-- [ ] 7. Implement ScreenshotModule
-  - [~] 7.1 Implement `captureScreenshot(pdfCanvas, annotationCanvas)`
+- [x] 7. Implement ScreenshotModule
+  - [x] 7.1 Implement `captureScreenshot(pdfCanvas, annotationCanvas)`
     - Create `OffscreenCanvas(w, h)` (fall back to temp `<canvas>` if unavailable)
     - `ctx.drawImage(pdfCanvas, 0, 0)` then `ctx.drawImage(annotationCanvas, 0, 0)`
     - Encode as PNG: `offscreen.convertToBlob({ type: 'image/png' })`
@@ -149,8 +149,8 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - **Validates: Requirements 9.1, 9.2**
     - Call `captureScreenshot` twice; assert second call replaces first buffer and `screenshotPage` reflects second call's page
 
-- [ ] 8. Implement Presenter View lifecycle, cursor logic, and resume-page
-  - [~] 8.1 Implement `enterPresenterView()`, `exitPresenterView()`, and `fullscreenchange` listener
+- [x] 8. Implement Presenter View lifecycle, cursor logic, and resume-page
+  - [x] 8.1 Implement `enterPresenterView()`, `exitPresenterView()`, and `fullscreenchange` listener
     - `enterPresenterView()`:
       - Read `#start-page-input` value; clamp to [1, pageCount]; set `AppState.currentPage`
       - Show `#presenter` section (hide `#landing`), set `AppState.isPresenting = true`
@@ -166,7 +166,7 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - Implement `syncAnnotationCanvasSize()`: match annotation canvas dimensions to `pdf-canvas`
     - _Requirements: 2.7, 4.1, 4.3, 4.9_
 
-  - [~] 8.2 Implement pointer event handlers and cursor hide/show
+  - [x] 8.2 Implement pointer event handlers and cursor hide/show
     - `mousemove` on annotation canvas: show crosshair cursor; if `activeStroke`, call `continueStroke(e.offsetX, e.offsetY)`
     - `mousedown` on annotation canvas: hide cursor, call `beginStroke(e.offsetX, e.offsetY)`
     - `mouseup` on annotation canvas: call `endStroke()`; cursor stays hidden
@@ -178,8 +178,8 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - **Validates: Requirements 4.9, 2.7**
     - Call `exitPresenterView()` with `currentPage = P`; assert `AppState.resumePage === P`, `#start-page-input.value === String(P)`; simulate `enterPresenterView()` and assert `currentPage === P`
 
-- [ ] 9. Implement keyboard shortcut handler and page navigation
-  - [~] 9.1 Implement `navigatePage(delta)` and keyboard dispatch (9 shortcuts)
+- [x] 9. Implement keyboard shortcut handler and page navigation
+  - [x] 9.1 Implement `navigatePage(delta)` and keyboard dispatch (9 shortcuts)
     - `navigatePage(+1)`: if `currentPage < pageCount`, increment, re-render
     - `navigatePage(-1)`: if `currentPage > 1`, decrement, re-render
     - Add single `keydown` listener on `document`; guard with `if (!AppState.isPresenting) return`
@@ -195,11 +195,11 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - **Validates: Requirements 8.1, 8.3**
     - Include S key in the test matrix
 
-- [~] 10. Checkpoint — Ensure core navigation, annotation, and screenshot work end-to-end
+- [x] 10. Checkpoint — Ensure core navigation, annotation, and screenshot work end-to-end
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 11. Implement SaveModule (pdf-lib) and screenshot download
-  - [~] 11.1 Implement `saveWithAnnotations(pdfBytes, strokes, version, originalFileName)`
+- [x] 11. Implement SaveModule (pdf-lib) and screenshot download
+  - [x] 11.1 Implement `saveWithAnnotations(pdfBytes, strokes, version, originalFileName)`
     - Call `PDFLib.PDFDocument.load(pdfBytes)`
     - For each page with strokes: get `PDFPage`, iterate strokes, convert coordinates, draw path
     - Update creator: `doc.setCreator('PDFhero by NoSocial.Net v1.01')`
@@ -208,7 +208,7 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - On error, catch and call `showError(message)`
     - _Requirements: 7.1, 7.2, 7.3, 7.4, 7.5_
 
-  - [~] 11.2 Implement `downloadScreenshot(buffer, originalFileName, pageNum)`
+  - [x] 11.2 Implement `downloadScreenshot(buffer, originalFileName, pageNum)`
     - Wire `#btn-download-screenshot` click handler
     - Guard: if `AppState.screenshotBuffer === null`, do nothing (button is disabled anyway)
     - Derive filename: `originalFileName + '-' + String(pageNum).padStart(3, '0') + '-PDFhero.png'`
@@ -233,8 +233,8 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - **Validates: Requirements 9.3**
     - For `originalFileName = "slides"` and `screenshotPage = 3`, assert filename equals `"slides-003-PDFhero.png"`
 
-- [ ] 12. Wire all modules together in `<script type="module">`
-  - [~] 12.1 Assemble main entry point and event wiring
+- [x] 12. Wire all modules together in `<script type="module">`
+  - [x] 12.1 Assemble main entry point and event wiring
     - Call `initPdfcpu()` at DOMContentLoaded (non-blocking)
     - Wire `#btn-present` → `enterPresenterView()`
     - Wire `#btn-save` → `saveWithAnnotations(...)`
@@ -244,11 +244,11 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - Confirm all 9 keyboard shortcuts registered and functional
     - _Requirements: 1.1, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 4.1, 8.1, 8.2, 8.3, 9.1_
 
-- [~] 13. Final checkpoint — Ensure all tests pass
+- [-] 13. Final checkpoint — Ensure all tests pass
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 14. Create Python CDN library archival script
-  - [~] 14.1 Create `tools/fetch_cdn_libs.py` — downloads pinned CDN libraries to local disk
+  - [ ] 14.1 Create `tools/fetch_cdn_libs.py` — downloads pinned CDN libraries to local disk
     - The script is standalone, requires only Python 3.8+ stdlib (`urllib.request`, `hashlib`, `json`, `pathlib`) — no pip installs
     - Define a `LIBRARIES` list at the top of the script. Each entry is a dict with:
       - `name`: human-readable name (e.g. `"PDF.js"`)
