@@ -277,8 +277,10 @@
       max-width: 100vw;
       max-height: 100vh;
       object-fit: contain; /* Ensures aspect ratio is preserved */
-      /* Remove max-width and max-height to prevent scaling */
-      /* The canvas will render at native PDF resolution */
+      image-rendering: auto;
+      image-rendering: high-quality;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: smooth;
     }
 
     #annotation-canvas {
@@ -289,6 +291,10 @@
       max-width: 100vw;
       max-height: 100vh;
       object-fit: contain;
+      image-rendering: auto;
+      image-rendering: high-quality;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: smooth;
     }
   </style>
 </head>
@@ -1959,7 +1965,7 @@
           }
         }
 
-        doc.setCreator('PDFhero by NoSocial.Net v1.01');
+        doc.setCreator('PDFhero by NoSocial.Net v1.02');
         const bytes    = await doc.save();
         const blob     = new Blob([bytes], { type: 'application/pdf' });
         const url      = URL.createObjectURL(blob);
