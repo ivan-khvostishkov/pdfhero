@@ -278,9 +278,6 @@
       max-height: 100vh;
       object-fit: contain; /* Ensures aspect ratio is preserved */
       image-rendering: auto;
-      image-rendering: high-quality;
-      image-rendering: -webkit-optimize-contrast;
-      image-rendering: smooth;
     }
 
     #annotation-canvas {
@@ -292,9 +289,6 @@
       max-height: 100vh;
       object-fit: contain;
       image-rendering: auto;
-      image-rendering: high-quality;
-      image-rendering: -webkit-optimize-contrast;
-      image-rendering: smooth;
     }
   </style>
 </head>
@@ -1509,11 +1503,16 @@
       const pts = stroke.points;
       if (pts.length < 2) return;
 
+      // Calculate scale factor for line width
+      const canvasScale = annotationCanvas.width / parseFloat(annotationCanvas.style.width || annotationCanvas.width);
+
       ctx.save();
       ctx.strokeStyle = stroke.color;
-      ctx.lineWidth = stroke.lineWidth;
+      ctx.lineWidth = (stroke.lineWidth || 3) * canvasScale; // Scale line width
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
 
       ctx.beginPath();
       ctx.moveTo(pts[0].x, pts[0].y);
@@ -1524,7 +1523,6 @@
         ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
       }
 
-      // Draw to the final point
       const last = pts[pts.length - 1];
       ctx.lineTo(last.x, last.y);
       ctx.stroke();
@@ -1614,7 +1612,8 @@
     }
 
     /**
-     * Render a single PDF page to the given canvas at native resolution (scale 1.0).
+     * Render a single PDF page to the given canvas at optimal resolution.
+     * Uses device pixel ratio to ensure crisp rendering on all displays.
      * @param {Object} doc - PDF.js PDFDocumentProxy
      * @param {number} pageNum - 1-based page number
      * @param {HTMLCanvasElement} canvas - Target canvas element
@@ -1624,32 +1623,45 @@
       try {
         const page = await doc.getPage(pageNum);
 
-        // Get the base viewport at scale 1.0 to read dimensions
+        // Get base viewport to determine page dimensions
         const baseViewport = page.getViewport({ scale: 1.0 });
 
-        // Calculate optimal scale to avoid fractional pixels
-        // Use 2x or 3x scale for high DPI rendering
-        const dpiScale = 3.0; // or 3.0 for even higher quality
+        // Calculate scale to fit screen while maintaining aspect ratio
+        const scaleX = window.innerWidth / baseViewport.width;
+        const scaleY = window.innerHeight / baseViewport.height;
+        const displayScale = Math.min(scaleX, scaleY) * 0.95; // 95% to add small margin
 
-        // Alternative: calculate scale to match screen dimensions exactly
-        // const screenScale = Math.max(
-        //   window.innerWidth / baseViewport.width,
-        //   window.innerHeight / baseViewport.height
-        // );
-        // const dpiScale = Math.ceil(screenScale);
+        // Use device pixel ratio for crisp rendering (minimum 3x for quality)
+        const pixelRatio = window.devicePixelRatio || 1;
+        const renderScale = displayScale * Math.max(pixelRatio, 3);
 
-        const viewport = page.getViewport({ scale: dpiScale });
+        const viewport = page.getViewport({ scale: renderScale });
 
-        // Set canvas to render at higher resolution
-        canvas.width = Math.round(viewport.width);
-        canvas.height = Math.round(viewport.height);
+        // Set canvas internal resolution to match render scale
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
 
-        // Scale down display via CSS to show at intended size
-        canvas.style.width = Math.round(baseViewport.width) + 'px';
-        canvas.style.height = Math.round(baseViewport.height) + 'px';
+        // Set CSS size to display scale (actual screen size)
+        const displayWidth = baseViewport.width * displayScale;
+        const displayHeight = baseViewport.height * displayScale;
+        canvas.style.width = `${displayWidth}px`;
+        canvas.style.height = `${displayHeight}px`;
 
-        const ctx = canvas.getContext('2d');
-        await page.render({ canvasContext: ctx, viewport }).promise;
+        const ctx = canvas.getContext('2d', {
+          alpha: false,
+          desynchronized: true,
+        });
+
+        // Enable image smoothing for better quality
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+
+        await page.render({
+          canvasContext: ctx,
+          viewport: viewport,
+          intent: 'display',
+        }).promise;
+
       } catch (err) {
         showError(`Page render error (page ${pageNum}): ${err.message ?? err}`);
       }
@@ -1742,6 +1754,11 @@
       // Match the CSS display size
       annotationCanvas.style.width = pdfCanvas.style.width;
       annotationCanvas.style.height = pdfCanvas.style.height;
+
+      // Enable smoothing on annotation canvas too
+      const ctx = annotationCanvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
     }
 
     /** Enter full-screen presenter view starting at the chosen page. */
