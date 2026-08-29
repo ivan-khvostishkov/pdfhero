@@ -1625,63 +1625,57 @@
      * @param {HTMLCanvasElement} canvas - Target canvas element
      * @returns {Promise<void>}
      */
+    /**
+     * Render using img element (browsers have better image scaling than canvas)
+     */
     async function renderPage(doc, pageNum, canvas) {
       try {
         const page = await doc.getPage(pageNum);
-
-        // Get base viewport to determine page dimensions
         const baseViewport = page.getViewport({ scale: 1.0 });
 
-        // Calculate scale to fill screen completely (no margins)
         const scaleX = window.innerWidth / baseViewport.width;
         const scaleY = window.innerHeight / baseViewport.height;
         const displayScale = Math.min(scaleX, scaleY);
 
-        // Render at high resolution (3x-4x display size)
-        const superSampleScale = 6.0;
-        const renderScale = displayScale * superSampleScale;
-
+        // Render at 3x-4x resolution
+        const renderScale = displayScale * 3.0;
         const viewport = page.getViewport({ scale: renderScale });
 
-        // Create temporary high-res canvas for PDF rendering
+        // Render to high-res temp canvas
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = viewport.width;
         tempCanvas.height = viewport.height;
+        const tempCtx = tempCanvas.getContext('2d', { alpha: false });
 
-        const tempCtx = tempCanvas.getContext('2d', {
-          alpha: false,
-        });
-
-        // Render PDF at high resolution
         await page.render({
           canvasContext: tempCtx,
           viewport: viewport,
           intent: 'display',
         }).promise;
 
-        // Now set display canvas to exact screen size
-        const displayWidth = baseViewport.width * displayScale;
-        const displayHeight = baseViewport.height * displayScale;
+        // Convert to data URL and use img element for scaling
+        const dataUrl = tempCanvas.toDataURL('image/png');
 
-        canvas.width = displayWidth;
-        canvas.height = displayHeight;
-        canvas.style.width = `${displayWidth}px`;
-        canvas.style.height = `${displayHeight}px`;
+        // Set canvas to display size
+        const targetWidth = Math.round(baseViewport.width * displayScale);
+        const targetHeight = Math.round(baseViewport.height * displayScale);
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        canvas.style.width = `${targetWidth}px`;
+        canvas.style.height = `${targetHeight}px`;
 
-        // Get display context with smoothing enabled
-        const ctx = canvas.getContext('2d', {
-          alpha: false,
-          desynchronized: true,
+        // Load image and draw (img element has better scaling)
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = dataUrl;
         });
 
-        // Enable high-quality smoothing for downscaling
+        const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-
-        // Draw the high-res temp canvas onto display canvas
-        // The browser will apply smooth downscaling
-        ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height,
-                0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
 
       } catch (err) {
         showError(`Page render error (page ${pageNum}): ${err.message ?? err}`);
