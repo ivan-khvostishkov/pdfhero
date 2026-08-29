@@ -1,0 +1,1504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDFhero</title>
+
+  <!-- PWA manifest -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#e94560" />
+
+  <style>
+    /* ── Reset & base ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    /* ── Landing page ─────────────────────────────────────────────── */
+    #landing {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+
+    #landing h1 {
+      font-size: 2.4rem;
+      font-weight: 700;
+      color: #e94560;
+      letter-spacing: -0.5px;
+    }
+
+    #landing-header {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    /* Shortcut legend */
+    #shortcut-legend {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 12px 16px;
+    }
+
+    #shortcut-legend h2 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    .shortcut-row {
+      display: flex;
+      gap: 8px;
+      align-items: baseline;
+      padding: 2px 0;
+      font-size: 0.88rem;
+    }
+
+    .shortcut-key {
+      display: inline-block;
+      min-width: 100px;
+      font-family: monospace;
+      font-size: 0.82rem;
+      color: #e94560;
+      font-weight: 600;
+    }
+
+    /* File input */
+    #file-input {
+      cursor: pointer;
+      color: #e0e0e0;
+    }
+
+    /* Metadata panel */
+    #metadata-panel {
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 8px;
+      padding: 12px 16px;
+      font-size: 0.88rem;
+      min-height: 48px;
+      display: none; /* shown after file load */
+    }
+
+    #metadata-panel.visible { display: block; }
+
+    #metadata-panel .meta-filename {
+      font-weight: 600;
+      font-size: 1rem;
+      color: #e94560;
+      margin-bottom: 8px;
+      word-break: break-all;
+    }
+
+    .meta-row {
+      display: flex;
+      gap: 8px;
+      padding: 1px 0;
+    }
+
+    .meta-label {
+      min-width: 160px;
+      color: #888;
+    }
+
+    /* Present controls row */
+    #present-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    #present-controls label {
+      color: #aaa;
+      font-size: 0.9rem;
+    }
+
+    #start-page-input {
+      width: 70px;
+      padding: 6px 8px;
+      background: #16213e;
+      border: 1px solid #0f3460;
+      border-radius: 6px;
+      color: #e0e0e0;
+      font-size: 0.9rem;
+    }
+
+    /* Buttons */
+    button {
+      padding: 8px 18px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      transition: opacity 0.15s, background 0.15s;
+    }
+
+    button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    #btn-present {
+      background: #e94560;
+      color: #fff;
+      padding: 9px 22px;
+      font-size: 1rem;
+    }
+
+    #btn-present:not(:disabled):hover { background: #c73850; }
+
+    #btn-about {
+      background: transparent;
+      border: 1px solid #0f3460;
+      color: #aaa;
+      padding: 6px 14px;
+      font-size: 0.85rem;
+    }
+
+    #btn-about:hover { border-color: #e94560; color: #e0e0e0; }
+
+    #btn-save, #btn-download-screenshot {
+      background: #0f3460;
+      color: #e0e0e0;
+    }
+
+    #btn-save:hover { background: #1a4a7a; }
+    #btn-download-screenshot:not(:disabled):hover { background: #1a4a7a; }
+
+    /* Error alert */
+    #error-container {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      width: min(600px, 90vw);
+    }
+
+    .error-alert {
+      background: #5c1a1a;
+      border: 1px solid #e94560;
+      border-radius: 8px;
+      padding: 12px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      font-size: 0.9rem;
+      color: #ffc0c0;
+    }
+
+    .error-alert button {
+      background: transparent;
+      border: none;
+      color: #ffc0c0;
+      font-size: 1.1rem;
+      line-height: 1;
+      padding: 0 4px;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    /* ── About dialog ─────────────────────────────────────────────── */
+    #about-dialog {
+      background: #16213e;
+      color: #e0e0e0;
+      border: 1px solid #0f3460;
+      border-radius: 12px;
+      padding: 28px 32px;
+      max-width: 440px;
+      width: 90vw;
+    }
+
+    #about-dialog::backdrop {
+      background: rgba(0, 0, 0, 0.65);
+    }
+
+    #about-dialog p {
+      margin-bottom: 20px;
+      line-height: 1.7;
+    }
+
+    #btn-about-close {
+      background: #0f3460;
+      color: #e0e0e0;
+    }
+
+    #btn-about-close:hover { background: #1a4a7a; }
+
+    /* ── Presenter section ────────────────────────────────────────── */
+    #presenter {
+      display: none; /* toggled by JS */
+      width: 100vw;
+      height: 100vh;
+      background: #000;
+      position: fixed;
+      inset: 0;
+      justify-content: center;
+      align-items: center;
+      cursor: none; /* default hidden; crosshair shown on mousemove */
+      overflow: hidden;
+    }
+
+    #presenter.active {
+      display: flex;
+    }
+
+    #slide-container {
+      position: relative;
+      display: inline-block;
+      line-height: 0; /* collapse inline-block gap */
+    }
+
+    #pdf-canvas {
+      display: block;
+      max-width: 100vw;
+      max-height: 100vh;
+    }
+
+    #annotation-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      cursor: none; /* updated to crosshair on mousemove, back to none on mousedown */
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Error container (fixed overlay, used in all views) ─────── -->
+  <div id="error-container" aria-live="polite"></div>
+
+  <!-- ── Landing Page ───────────────────────────────────────────── -->
+  <section id="landing">
+
+    <div id="landing-header">
+      <h1>PDFhero</h1>
+      <button id="btn-about">About</button>
+    </div>
+
+    <!-- Shortcut legend — 9 shortcuts -->
+    <div id="shortcut-legend">
+      <h2>Keyboard shortcuts (presenter view)</h2>
+      <div class="shortcut-row"><span class="shortcut-key">→ / Page Down</span><span>Next page</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">← / Page Up</span><span>Previous page</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Q</span><span>Exit presenter view</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">E</span><span>Erase all annotations</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">U</span><span>Undo last stroke</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Z</span><span>Redo last undone stroke</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">S</span><span>Capture screenshot</span></div>
+    </div>
+
+    <!-- File selector -->
+    <input type="file" id="file-input" accept=".pdf" aria-label="Select a PDF file" />
+
+    <!-- Metadata panel (hidden until a file is loaded) -->
+    <div id="metadata-panel" role="region" aria-label="PDF metadata">
+      <div class="meta-filename" id="meta-filename"></div>
+      <div class="meta-row"><span class="meta-label">Document size</span><span id="meta-size"></span></div>
+      <div class="meta-row"><span class="meta-label">Viewport size</span><span id="meta-viewport"></span></div>
+      <div class="meta-row"><span class="meta-label">Page count</span><span id="meta-page-count"></span></div>
+      <div class="meta-row"><span class="meta-label">Creator</span><span id="meta-creator"></span></div>
+      <div class="meta-row"><span class="meta-label">PDF/X level</span><span id="meta-pdfx"></span></div>
+      <div class="meta-row"><span class="meta-label">Rendering intent</span><span id="meta-rendering-intent"></span></div>
+      <div class="meta-row"><span class="meta-label">ICC profiles</span><span id="meta-icc"></span></div>
+    </div>
+
+    <!-- Present controls -->
+    <div id="present-controls">
+      <label for="start-page-input">Start page:</label>
+      <input type="number" id="start-page-input" value="1" min="1" aria-label="Start page number" />
+      <button id="btn-present" disabled>Present as a hero</button>
+    </div>
+
+    <button id="btn-save">Save with annotations</button>
+    <button id="btn-download-screenshot" disabled>Download screenshot</button>
+
+  </section>
+
+  <!-- ── Presenter View ──────────────────────────────────────────── -->
+  <section id="presenter" aria-label="Presenter view">
+    <div id="slide-container">
+      <canvas id="pdf-canvas"></canvas>
+      <canvas id="annotation-canvas"
+              style="position:absolute; top:0; left:0; cursor:none"
+              aria-hidden="true"></canvas>
+    </div>
+  </section>
+
+  <!-- ── About dialog ───────────────────────────────────────────── -->
+  <dialog id="about-dialog" aria-labelledby="about-title">
+    <p id="about-title">
+      PDFhero by NoSocial.Net and Ivan Khvostishkov, copyright 2026+.<br>
+      Created together with Kiro.
+    </p>
+    <button id="btn-about-close">Close</button>
+  </dialog>
+
+  <!-- ── CDN libraries ──────────────────────────────────────────── -->
+  <!-- PDF.js (ES module — imported inside the module script below) -->
+  <!-- pdf-lib (UMD build — exposes window.PDFLib) -->
+  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+
+  <!-- ── Go WASM runtime (wasm_exec.js — inlined verbatim) ─────── -->
+  <!-- Source: https://raw.githubusercontent.com/golang/go/go1.21.0/misc/wasm/wasm_exec.js -->
+  <!-- Required to run pdfcpu WASM (a Go-compiled WebAssembly binary) -->
+  <script>
+// Copyright 2018 The Go Authors. All rights reserved.
+// Use of this source code is governed by a BSD-style
+// license that can be found in the LICENSE file.
+
+"use strict";
+
+(() => {
+	const enosys = () => {
+		const err = new Error("not implemented");
+		err.code = "ENOSYS";
+		return err;
+	};
+
+	if (!globalThis.fs) {
+		let outputBuf = "";
+		globalThis.fs = {
+			constants: { O_WRONLY: -1, O_RDWR: -1, O_CREAT: -1, O_TRUNC: -1, O_APPEND: -1, O_EXCL: -1 }, // unused
+			writeSync(fd, buf) {
+				outputBuf += decoder.decode(buf);
+				const nl = outputBuf.lastIndexOf("\n");
+				if (nl != -1) {
+					console.log(outputBuf.substring(0, nl));
+					outputBuf = outputBuf.substring(nl + 1);
+				}
+				return buf.length;
+			},
+			write(fd, buf, offset, length, position, callback) {
+				if (offset !== 0 || length !== buf.length || position !== null) {
+					callback(enosys());
+					return;
+				}
+				const n = this.writeSync(fd, buf);
+				callback(null, n);
+			},
+			chmod(path, mode, callback) { callback(enosys()); },
+			chown(path, uid, gid, callback) { callback(enosys()); },
+			close(fd, callback) { callback(enosys()); },
+			fchmod(fd, mode, callback) { callback(enosys()); },
+			fchown(fd, uid, gid, callback) { callback(enosys()); },
+			fstat(fd, callback) { callback(enosys()); },
+			fsync(fd, callback) { callback(null); },
+			ftruncate(fd, length, callback) { callback(enosys()); },
+			lchown(path, uid, gid, callback) { callback(enosys()); },
+			link(path, link, callback) { callback(enosys()); },
+			lstat(path, callback) { callback(enosys()); },
+			mkdir(path, perm, callback) { callback(enosys()); },
+			open(path, flags, mode, callback) { callback(enosys()); },
+			read(fd, buffer, offset, length, position, callback) { callback(enosys()); },
+			readdir(path, callback) { callback(enosys()); },
+			readlink(path, callback) { callback(enosys()); },
+			rename(from, to, callback) { callback(enosys()); },
+			rmdir(path, callback) { callback(enosys()); },
+			stat(path, callback) { callback(enosys()); },
+			symlink(path, link, callback) { callback(enosys()); },
+			truncate(path, length, callback) { callback(enosys()); },
+			unlink(path, callback) { callback(enosys()); },
+			utimes(path, atime, mtime, callback) { callback(enosys()); },
+		};
+	}
+
+	if (!globalThis.process) {
+		globalThis.process = {
+			getuid() { return -1; },
+			getgid() { return -1; },
+			geteuid() { return -1; },
+			getegid() { return -1; },
+			getgroups() { throw enosys(); },
+			pid: -1,
+			ppid: -1,
+			umask() { throw enosys(); },
+			cwd() { throw enosys(); },
+			chdir() { throw enosys(); },
+		}
+	}
+
+	if (!globalThis.crypto) {
+		throw new Error("globalThis.crypto is not available, polyfill required (crypto.getRandomValues only)");
+	}
+
+	if (!globalThis.performance) {
+		throw new Error("globalThis.performance is not available, polyfill required (performance.now only)");
+	}
+
+	if (!globalThis.TextEncoder) {
+		throw new Error("globalThis.TextEncoder is not available, polyfill required");
+	}
+
+	if (!globalThis.TextDecoder) {
+		throw new Error("globalThis.TextDecoder is not available, polyfill required");
+	}
+
+	const encoder = new TextEncoder("utf-8");
+	const decoder = new TextDecoder("utf-8");
+
+	globalThis.Go = class {
+		constructor() {
+			this.argv = ["js"];
+			this.env = {};
+			this.exit = (code) => {
+				if (code !== 0) {
+					console.warn("exit code:", code);
+				}
+			};
+			this._exitPromise = new Promise((resolve) => {
+				this._resolveExitPromise = resolve;
+			});
+			this._pendingEvent = null;
+			this._scheduledTimeouts = new Map();
+			this._nextCallbackTimeoutID = 1;
+
+			const setInt64 = (addr, v) => {
+				this.mem.setUint32(addr + 0, v, true);
+				this.mem.setUint32(addr + 4, Math.floor(v / 4294967296), true);
+			}
+
+			const setInt32 = (addr, v) => {
+				this.mem.setUint32(addr + 0, v, true);
+			}
+
+			const getInt64 = (addr) => {
+				const low = this.mem.getUint32(addr + 0, true);
+				const high = this.mem.getInt32(addr + 4, true);
+				return low + high * 4294967296;
+			}
+
+			const loadValue = (addr) => {
+				const f = this.mem.getFloat64(addr, true);
+				if (f === 0) {
+					return undefined;
+				}
+				if (!isNaN(f)) {
+					return f;
+				}
+
+				const id = this.mem.getUint32(addr, true);
+				return this._values[id];
+			}
+
+			const storeValue = (addr, v) => {
+				const nanHead = 0x7FF80000;
+
+				if (typeof v === "number" && v !== 0) {
+					if (isNaN(v)) {
+						this.mem.setUint32(addr + 4, nanHead, true);
+						this.mem.setUint32(addr, 0, true);
+						return;
+					}
+					this.mem.setFloat64(addr, v, true);
+					return;
+				}
+
+				if (v === undefined) {
+					this.mem.setFloat64(addr, 0, true);
+					return;
+				}
+
+				let id = this._ids.get(v);
+				if (id === undefined) {
+					id = this._idPool.pop();
+					if (id === undefined) {
+						id = this._values.length;
+					}
+					this._values[id] = v;
+					this._goRefCounts[id] = 0;
+					this._ids.set(v, id);
+				}
+				this._goRefCounts[id]++;
+				let typeFlag = 0;
+				switch (typeof v) {
+					case "object":
+						if (v !== null) {
+							typeFlag = 1;
+						}
+						break;
+					case "string":
+						typeFlag = 2;
+						break;
+					case "symbol":
+						typeFlag = 3;
+						break;
+					case "function":
+						typeFlag = 4;
+						break;
+				}
+				this.mem.setUint32(addr + 4, nanHead | typeFlag, true);
+				this.mem.setUint32(addr, id, true);
+			}
+
+			const loadSlice = (addr) => {
+				const array = getInt64(addr + 0);
+				const len = getInt64(addr + 8);
+				return new Uint8Array(this._inst.exports.mem.buffer, array, len);
+			}
+
+			const loadSliceOfValues = (addr) => {
+				const array = getInt64(addr + 0);
+				const len = getInt64(addr + 8);
+				const a = new Array(len);
+				for (let i = 0; i < len; i++) {
+					a[i] = loadValue(array + i * 8);
+				}
+				return a;
+			}
+
+			const loadString = (addr) => {
+				const saddr = getInt64(addr + 0);
+				const len = getInt64(addr + 8);
+				return decoder.decode(new DataView(this._inst.exports.mem.buffer, saddr, len));
+			}
+
+			const timeOrigin = Date.now() - performance.now();
+			this.importObject = {
+				_gotest: {
+					add: (a, b) => a + b,
+				},
+				gojs: {
+					// Go's SP does not change as long as no Go code is running. Some operations (e.g. calls, getters and setters)
+					// may synchronously trigger a Go event handler. This makes Go code get executed in the middle of the imported
+					// function. A goroutine can switch to a new stack if the current stack is too small (see morestack function).
+					// This changes the SP, thus we have to update the SP used by the imported function.
+
+					// func wasmExit(code int32)
+					"runtime.wasmExit": (sp) => {
+						sp >>>= 0;
+						const code = this.mem.getInt32(sp + 8, true);
+						this.exited = true;
+						delete this._inst;
+						delete this._values;
+						delete this._goRefCounts;
+						delete this._ids;
+						delete this._idPool;
+						this.exit(code);
+					},
+
+					// func wasmWrite(fd uintptr, p unsafe.Pointer, n int32)
+					"runtime.wasmWrite": (sp) => {
+						sp >>>= 0;
+						const fd = getInt64(sp + 8);
+						const p = getInt64(sp + 16);
+						const n = this.mem.getInt32(sp + 24, true);
+						fs.writeSync(fd, new Uint8Array(this._inst.exports.mem.buffer, p, n));
+					},
+
+					// func resetMemoryDataView()
+					"runtime.resetMemoryDataView": (sp) => {
+						sp >>>= 0;
+						this.mem = new DataView(this._inst.exports.mem.buffer);
+					},
+
+					// func nanotime1() int64
+					"runtime.nanotime1": (sp) => {
+						sp >>>= 0;
+						setInt64(sp + 8, (timeOrigin + performance.now()) * 1000000);
+					},
+
+					// func walltime() (sec int64, nsec int32)
+					"runtime.walltime": (sp) => {
+						sp >>>= 0;
+						const msec = (new Date).getTime();
+						setInt64(sp + 8, msec / 1000);
+						this.mem.setInt32(sp + 16, (msec % 1000) * 1000000, true);
+					},
+
+					// func scheduleTimeoutEvent(delay int64) int32
+					"runtime.scheduleTimeoutEvent": (sp) => {
+						sp >>>= 0;
+						const id = this._nextCallbackTimeoutID;
+						this._nextCallbackTimeoutID++;
+						this._scheduledTimeouts.set(id, setTimeout(
+							() => {
+								this._resume();
+								while (this._scheduledTimeouts.has(id)) {
+									// for some reason Go failed to register the timeout event, log and try again
+									// (temporary workaround for https://github.com/golang/go/issues/28975)
+									console.warn("scheduleTimeoutEvent: missed timeout event");
+									this._resume();
+								}
+							},
+							getInt64(sp + 8),
+						));
+						this.mem.setInt32(sp + 16, id, true);
+					},
+
+					// func clearTimeoutEvent(id int32)
+					"runtime.clearTimeoutEvent": (sp) => {
+						sp >>>= 0;
+						const id = this.mem.getInt32(sp + 8, true);
+						clearTimeout(this._scheduledTimeouts.get(id));
+						this._scheduledTimeouts.delete(id);
+					},
+
+					// func getRandomData(r []byte)
+					"runtime.getRandomData": (sp) => {
+						sp >>>= 0;
+						crypto.getRandomValues(loadSlice(sp + 8));
+					},
+
+					// func finalizeRef(v ref)
+					"syscall/js.finalizeRef": (sp) => {
+						sp >>>= 0;
+						const id = this.mem.getUint32(sp + 8, true);
+						this._goRefCounts[id]--;
+						if (this._goRefCounts[id] === 0) {
+							const v = this._values[id];
+							this._values[id] = null;
+							this._ids.delete(v);
+							this._idPool.push(id);
+						}
+					},
+
+					// func stringVal(value string) ref
+					"syscall/js.stringVal": (sp) => {
+						sp >>>= 0;
+						storeValue(sp + 24, loadString(sp + 8));
+					},
+
+					// func valueGet(v ref, p string) ref
+					"syscall/js.valueGet": (sp) => {
+						sp >>>= 0;
+						const result = Reflect.get(loadValue(sp + 8), loadString(sp + 16));
+						sp = this._inst.exports.getsp() >>> 0; // see comment above
+						storeValue(sp + 32, result);
+					},
+
+					// func valueSet(v ref, p string, x ref)
+					"syscall/js.valueSet": (sp) => {
+						sp >>>= 0;
+						Reflect.set(loadValue(sp + 8), loadString(sp + 16), loadValue(sp + 32));
+					},
+
+					// func valueDelete(v ref, p string)
+					"syscall/js.valueDelete": (sp) => {
+						sp >>>= 0;
+						Reflect.deleteProperty(loadValue(sp + 8), loadString(sp + 16));
+					},
+
+					// func valueIndex(v ref, i int) ref
+					"syscall/js.valueIndex": (sp) => {
+						sp >>>= 0;
+						storeValue(sp + 24, Reflect.get(loadValue(sp + 8), getInt64(sp + 16)));
+					},
+
+					// valueSetIndex(v ref, i int, x ref)
+					"syscall/js.valueSetIndex": (sp) => {
+						sp >>>= 0;
+						Reflect.set(loadValue(sp + 8), getInt64(sp + 16), loadValue(sp + 24));
+					},
+
+					// func valueCall(v ref, m string, args []ref) (ref, bool)
+					"syscall/js.valueCall": (sp) => {
+						sp >>>= 0;
+						try {
+							const v = loadValue(sp + 8);
+							const m = Reflect.get(v, loadString(sp + 16));
+							const args = loadSliceOfValues(sp + 32);
+							const result = Reflect.apply(m, v, args);
+							sp = this._inst.exports.getsp() >>> 0; // see comment above
+							storeValue(sp + 56, result);
+							this.mem.setUint8(sp + 64, 1);
+						} catch (err) {
+							sp = this._inst.exports.getsp() >>> 0; // see comment above
+							storeValue(sp + 56, err);
+							this.mem.setUint8(sp + 64, 0);
+						}
+					},
+
+					// func valueInvoke(v ref, args []ref) (ref, bool)
+					"syscall/js.valueInvoke": (sp) => {
+						sp >>>= 0;
+						try {
+							const v = loadValue(sp + 8);
+							const args = loadSliceOfValues(sp + 16);
+							const result = Reflect.apply(v, undefined, args);
+							sp = this._inst.exports.getsp() >>> 0; // see comment above
+							storeValue(sp + 40, result);
+							this.mem.setUint8(sp + 48, 1);
+						} catch (err) {
+							sp = this._inst.exports.getsp() >>> 0; // see comment above
+							storeValue(sp + 40, err);
+							this.mem.setUint8(sp + 48, 0);
+						}
+					},
+
+					// func valueNew(v ref, args []ref) (ref, bool)
+					"syscall/js.valueNew": (sp) => {
+						sp >>>= 0;
+						try {
+							const v = loadValue(sp + 8);
+							const args = loadSliceOfValues(sp + 16);
+							const result = Reflect.construct(v, args);
+							sp = this._inst.exports.getsp() >>> 0; // see comment above
+							storeValue(sp + 40, result);
+							this.mem.setUint8(sp + 48, 1);
+						} catch (err) {
+							sp = this._inst.exports.getsp() >>> 0; // see comment above
+							storeValue(sp + 40, err);
+							this.mem.setUint8(sp + 48, 0);
+						}
+					},
+
+					// func valueLength(v ref) int
+					"syscall/js.valueLength": (sp) => {
+						sp >>>= 0;
+						setInt64(sp + 16, parseInt(loadValue(sp + 8).length));
+					},
+
+					// valuePrepareString(v ref) (ref, int)
+					"syscall/js.valuePrepareString": (sp) => {
+						sp >>>= 0;
+						const str = encoder.encode(String(loadValue(sp + 8)));
+						storeValue(sp + 16, str);
+						setInt64(sp + 24, str.length);
+					},
+
+					// valueLoadString(v ref, b []byte)
+					"syscall/js.valueLoadString": (sp) => {
+						sp >>>= 0;
+						const str = loadValue(sp + 8);
+						loadSlice(sp + 16).set(str);
+					},
+
+					// func valueInstanceOf(v ref, t ref) bool
+					"syscall/js.valueInstanceOf": (sp) => {
+						sp >>>= 0;
+						this.mem.setUint8(sp + 24, (loadValue(sp + 8) instanceof loadValue(sp + 16)) ? 1 : 0);
+					},
+
+					// func copyBytesToGo(dst []byte, src ref) (int, bool)
+					"syscall/js.copyBytesToGo": (sp) => {
+						sp >>>= 0;
+						const dst = loadSlice(sp + 8);
+						const src = loadValue(sp + 32);
+						if (!(src instanceof Uint8Array || src instanceof Uint8ClampedArray)) {
+							this.mem.setUint8(sp + 48, 0);
+							return;
+						}
+						const toCopy = src.subarray(0, dst.length);
+						dst.set(toCopy);
+						setInt64(sp + 40, toCopy.length);
+						this.mem.setUint8(sp + 48, 1);
+					},
+
+					// func copyBytesToJS(dst ref, src []byte) (int, bool)
+					"syscall/js.copyBytesToJS": (sp) => {
+						sp >>>= 0;
+						const dst = loadValue(sp + 8);
+						const src = loadSlice(sp + 16);
+						if (!(dst instanceof Uint8Array || dst instanceof Uint8ClampedArray)) {
+							this.mem.setUint8(sp + 48, 0);
+							return;
+						}
+						const toCopy = src.subarray(0, dst.length);
+						dst.set(toCopy);
+						setInt64(sp + 40, toCopy.length);
+						this.mem.setUint8(sp + 48, 1);
+					},
+
+					"debug": (value) => {
+						console.log(value);
+					},
+				}
+			};
+		}
+
+		async run(instance) {
+			if (!(instance instanceof WebAssembly.Instance)) {
+				throw new Error("Go.run: WebAssembly.Instance expected");
+			}
+			this._inst = instance;
+			this.mem = new DataView(this._inst.exports.mem.buffer);
+			this._values = [ // JS values that Go currently has references to, indexed by reference id
+				NaN,
+				0,
+				null,
+				true,
+				false,
+				globalThis,
+				this,
+			];
+			this._goRefCounts = new Array(this._values.length).fill(Infinity); // number of references that Go has to a JS value, indexed by reference id
+			this._ids = new Map([ // mapping from JS values to reference ids
+				[0, 1],
+				[null, 2],
+				[true, 3],
+				[false, 4],
+				[globalThis, 5],
+				[this, 6],
+			]);
+			this._idPool = [];   // unused ids that have been garbage collected
+			this.exited = false; // whether the Go program has exited
+
+			// Pass command line arguments and environment variables to WebAssembly by writing them to the linear memory.
+			let offset = 4096;
+
+			const strPtr = (str) => {
+				const ptr = offset;
+				const bytes = encoder.encode(str + "\0");
+				new Uint8Array(this.mem.buffer, offset, bytes.length).set(bytes);
+				offset += bytes.length;
+				if (offset % 8 !== 0) {
+					offset += 8 - (offset % 8);
+				}
+				return ptr;
+			};
+
+			const argc = this.argv.length;
+
+			const argvPtrs = [];
+			this.argv.forEach((arg) => {
+				argvPtrs.push(strPtr(arg));
+			});
+			argvPtrs.push(0);
+
+			const keys = Object.keys(this.env).sort();
+			keys.forEach((key) => {
+				argvPtrs.push(strPtr(`${key}=${this.env[key]}`));
+			});
+			argvPtrs.push(0);
+
+			const argv = offset;
+			argvPtrs.forEach((ptr) => {
+				this.mem.setUint32(offset, ptr, true);
+				this.mem.setUint32(offset + 4, 0, true);
+				offset += 8;
+			});
+
+			// The linker guarantees global data starts from at least wasmMinDataAddr.
+			// Keep in sync with cmd/link/internal/ld/data.go:wasmMinDataAddr.
+			const wasmMinDataAddr = 4096 + 8192;
+			if (offset >= wasmMinDataAddr) {
+				throw new Error("total length of command line and environment variables exceeds limit");
+			}
+
+			this._inst.exports.run(argc, argv);
+			if (this.exited) {
+				this._resolveExitPromise();
+			}
+			await this._exitPromise;
+		}
+
+		_resume() {
+			if (this.exited) {
+				throw new Error("Go program has already exited");
+			}
+			this._inst.exports.resume();
+			if (this.exited) {
+				this._resolveExitPromise();
+			}
+		}
+
+		_makeFuncWrapper(id) {
+			const go = this;
+			return function () {
+				const event = { id: id, this: this, args: arguments };
+				go._pendingEvent = event;
+				go._resume();
+				return event.result;
+			};
+		}
+	}
+})();
+  </script>
+
+  <!-- ── Main application module ───────────────────────────────── -->
+  <script type="module">
+    // PDF.js is loaded as an ES module import
+    import * as pdfjsLib from 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.min.mjs';
+
+    // Point PDF.js at its worker (same CDN, same version)
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/pdf.worker.min.mjs';
+
+    // ── Service Worker registration ──────────────────────────────
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('./sw.js');
+    }
+
+    // ── AppState ─────────────────────────────────────────────────
+    const AppState = {
+      // PDF data
+      pdfBytes: null,          // Uint8Array of the loaded PDF
+      pdfJsDoc: null,          // PDF.js PDFDocumentProxy
+      pageCount: 0,
+      currentPage: 1,
+
+      // Metadata (populated by MetadataModule)
+      meta: {
+        width: null,           // points
+        height: null,          // points
+        pageCount: null,
+        creator: null,
+        pdfXLevel: null,
+        renderingIntent: null,
+        iccProfiles: [],       // string[]
+      },
+
+      // Annotation
+      strokes: new Map(),      // Map<pageNum, Stroke[]>
+      redoStack: new Map(),    // Map<pageNum, Stroke[]>
+      activeStroke: null,      // Stroke | null (in-progress)
+
+      // Screenshot
+      screenshotBuffer: null,  // Blob | null — in-memory PNG, replaced on each S keypress
+      screenshotPage: null,    // number | null — page number captured in the buffer
+
+      // UI
+      cursorHideTimer: null,   // setTimeout handle
+      isPresenting: false,
+      resumePage: 1,           // page number to resume from; updated on exit
+      originalFileName: null,  // string | null — base name of selected file, without extension
+    };
+
+    // ── Error helpers ─────────────────────────────────────────────
+
+    /**
+     * Renders a dismissible alert into #error-container.
+     * Does NOT navigate away from the current view.
+     * @param {string} message
+     */
+    function showError(message) {
+      const container = document.getElementById('error-container');
+      // Remove any existing alert first
+      dismissError();
+
+      const alert = document.createElement('div');
+      alert.className = 'error-alert';
+      alert.setAttribute('role', 'alert');
+
+      const text = document.createElement('span');
+      text.textContent = message;
+
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = '✕';
+      closeBtn.setAttribute('aria-label', 'Dismiss error');
+      closeBtn.addEventListener('click', dismissError);
+
+      alert.appendChild(text);
+      alert.appendChild(closeBtn);
+      container.appendChild(alert);
+    }
+
+    /**
+     * Removes the alert element from #error-container.
+     */
+    function dismissError() {
+      const container = document.getElementById('error-container');
+      while (container.firstChild) {
+        container.removeChild(container.firstChild);
+      }
+    }
+
+    // ── MetadataModule — pdfcpu WASM init ────────────────────────
+
+    /**
+     * Flag indicating whether pdfcpu WASM initialised successfully.
+     * Set to true only after go.run() completes without error.
+     * Checked by extractMetadata() before attempting WASM calls.
+     * @type {boolean}
+     */
+    let pdfcpuReady = false;
+
+    /**
+     * Fetches and initialises the pdfcpu WASM binary once at page load.
+     * Uses the Go runtime exposed by the inlined wasm_exec.js (<class Go>).
+     *
+     * On success  : pdfcpuReady is set to true.
+     * On failure  : shows a non-blocking "Metadata unavailable" error banner
+     *               and leaves pdfcpuReady = false so the rest of the app
+     *               continues to function (file selection remains enabled).
+     *
+     * CDN URL: https://github.com/pdfcpu/pdfcpu/releases/download/v0.8.1/pdfcpu_wasm.wasm
+     *
+     * @returns {Promise<void>}
+     */
+    async function initPdfcpu() {
+      // pdfcpu WASM CDN — pinned to v0.8.1 release
+      const PDFCPU_WASM_URL =
+        'https://github.com/pdfcpu/pdfcpu/releases/download/v0.8.1/pdfcpu_wasm.wasm';
+
+      try {
+        const go = new Go(); // Go class provided by inlined wasm_exec.js
+        const result = await WebAssembly.instantiateStreaming(
+          fetch(PDFCPU_WASM_URL),
+          go.importObject
+        );
+        // go.run() launches the Go runtime inside the WASM instance.
+        // It returns a Promise that resolves when the Go program exits;
+        // for a long-running WASM module the promise may stay pending
+        // which is expected — we don't await it here.
+        go.run(result.instance);
+        pdfcpuReady = true;
+      } catch (err) {
+        console.error('pdfcpu WASM init failed:', err);
+        // Non-blocking: show banner but keep file selection enabled
+        showError('Metadata unavailable — pdfcpu WASM could not be loaded.');
+        // pdfcpuReady remains false
+      }
+    }
+
+    // ── MetadataModule — extractMetadata ─────────────────────────
+
+    /**
+     * Known ICC rendering intent strings to scan for in the PDF byte stream.
+     * @type {string[]}
+     */
+    const KNOWN_RENDERING_INTENTS = [
+      'RelativeColorimetric',
+      'AbsoluteColorimetric',
+      'Perceptual',
+      'Saturation',
+    ];
+
+    /**
+     * Known ICC profile names to look for in /ICCBased references
+     * and common ICC stream dictionary names.
+     * @type {string[]}
+     */
+    const KNOWN_ICC_PROFILES = ['sRGB', 'AdobeRGB', 'ProPhotoRGB'];
+
+    /**
+     * Decode a Uint8Array slice to a Latin-1 / ASCII string for regex scanning.
+     * Only processes the first `limit` bytes to avoid scanning huge files.
+     * @param {Uint8Array} bytes
+     * @param {number} [limit=65536]  Max bytes to decode
+     * @returns {string}
+     */
+    function bytesToLatin1(bytes, limit = 65536) {
+      const end = Math.min(bytes.length, limit);
+      let s = '';
+      for (let i = 0; i < end; i++) {
+        s += String.fromCharCode(bytes[i]);
+      }
+      return s;
+    }
+
+    /**
+     * Scan the entire PDF byte stream (decoded as Latin-1) for a pattern.
+     * Using a larger limit here because critical metadata may appear anywhere.
+     * @param {Uint8Array} bytes
+     * @param {number} [limit=524288]  Max bytes to decode (default 512 KB)
+     * @returns {string}
+     */
+    function bytesToLatin1Full(bytes, limit = 524288) {
+      return bytesToLatin1(bytes, limit);
+    }
+
+    /**
+     * Parse a PDF string value following a key in the raw PDF stream.
+     * Handles both `(literal string)` and `<hex string>` forms.
+     * Returns null if the key is absent or the value cannot be decoded.
+     * @param {string} raw   Latin-1 decoded PDF stream
+     * @param {string} key   PDF key name without leading slash, e.g. "Creator"
+     * @returns {string|null}
+     */
+    function parsePdfStringValue(raw, key) {
+      // Match /Key (literal string) or /Key<hexstring>
+      const literalRe = new RegExp('\\/' + key + '\\s*\\(([^)]*)\\)');
+      const hexRe = new RegExp('\\/' + key + '\\s*<([0-9A-Fa-f]*)>');
+
+      let m = literalRe.exec(raw);
+      if (m) {
+        // Strip PDF escape sequences minimally
+        return m[1].replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\\\/g, '\\').replace(/\\(.)/g, '$1').trim() || null;
+      }
+
+      m = hexRe.exec(raw);
+      if (m) {
+        try {
+          const hex = m[1];
+          let str = '';
+          for (let i = 0; i < hex.length - 1; i += 2) {
+            str += String.fromCharCode(parseInt(hex.substring(i, i + 2), 16));
+          }
+          return str.trim() || null;
+        } catch {
+          return null;
+        }
+      }
+
+      return null;
+    }
+
+    /**
+     * Attempt to extract PDF metadata by parsing the raw PDF byte stream.
+     * This is the reliable fallback path used when pdfcpu WASM is unavailable
+     * or its API call fails.
+     *
+     * Fields extracted:
+     *  - pageCount  : /Count integer from the Pages dictionary
+     *  - creator    : /Creator string from the document info dictionary
+     *  - width/height: first /MediaBox [0 0 W H] found in a page dictionary
+     *  - pdfXLevel  : /GTS_PDFXVersion string or "PDF/X" marker
+     *  - renderingIntent: /Intent string or first known intent keyword found
+     *  - iccProfiles: array of recognised ICC profile name strings
+     *
+     * @param {Uint8Array} pdfBytes
+     * @returns {{ width:number|null, height:number|null, pageCount:number|null,
+     *             creator:string|null, pdfXLevel:string|null,
+     *             renderingIntent:string|null, iccProfiles:string[] }}
+     */
+    function parsePdfFallback(pdfBytes) {
+      let width = null;
+      let height = null;
+      let pageCount = null;
+      let creator = null;
+      let pdfXLevel = null;
+      let renderingIntent = null;
+      const iccProfiles = [];
+
+      try {
+        const raw = bytesToLatin1Full(pdfBytes);
+
+        // ── pageCount (/Count <n>) ────────────────────────────────
+        try {
+          const countMatch = /\/Count\s+(\d+)/.exec(raw);
+          if (countMatch) {
+            const n = parseInt(countMatch[1], 10);
+            if (!isNaN(n) && n > 0) pageCount = n;
+          }
+        } catch { /* ignore */ }
+
+        // ── creator ──────────────────────────────────────────────
+        try {
+          creator = parsePdfStringValue(raw, 'Creator');
+        } catch { /* ignore */ }
+
+        // ── dimensions from first /MediaBox ──────────────────────
+        try {
+          // MediaBox entries: /MediaBox [ llx lly urx ury ]
+          const mediaBoxRe = /\/MediaBox\s*\[\s*([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s+([\d.+-]+)\s*\]/;
+          const mbMatch = mediaBoxRe.exec(raw);
+          if (mbMatch) {
+            const llx = parseFloat(mbMatch[1]);
+            const lly = parseFloat(mbMatch[2]);
+            const urx = parseFloat(mbMatch[3]);
+            const ury = parseFloat(mbMatch[4]);
+            if (!isNaN(urx) && !isNaN(ury) && !isNaN(llx) && !isNaN(lly)) {
+              const w = Math.abs(urx - llx);
+              const h = Math.abs(ury - lly);
+              if (w > 0) width = Math.round(w * 100) / 100;
+              if (h > 0) height = Math.round(h * 100) / 100;
+            }
+          }
+        } catch { /* ignore */ }
+
+        // ── PDF/X level ───────────────────────────────────────────
+        try {
+          // /GTS_PDFXVersion (PDF/X-4) or similar
+          const gtsMatch = parsePdfStringValue(raw, 'GTS_PDFXVersion');
+          if (gtsMatch) {
+            pdfXLevel = gtsMatch;
+          } else {
+            // Fallback: scan for PDF/X-n:yyyy pattern anywhere in stream
+            const pdfxRe = /PDF\/X-[\w:]+/;
+            const pdfxMatch = pdfxRe.exec(raw);
+            if (pdfxMatch) pdfXLevel = pdfxMatch[0];
+          }
+        } catch { /* ignore */ }
+
+        // ── renderingIntent ───────────────────────────────────────
+        try {
+          // Check /Intent name value first
+          const intentNameRe = /\/Intent\s*\/(\w+)/;
+          const intentMatch = intentNameRe.exec(raw);
+          if (intentMatch && KNOWN_RENDERING_INTENTS.includes(intentMatch[1])) {
+            renderingIntent = intentMatch[1];
+          } else {
+            // Scan for known intent strings anywhere in stream
+            for (const intent of KNOWN_RENDERING_INTENTS) {
+              if (raw.includes(intent)) {
+                renderingIntent = intent;
+                break;
+              }
+            }
+          }
+        } catch { /* ignore */ }
+
+        // ── ICC profiles (/ICCBased references) ───────────────────
+        try {
+          for (const profileName of KNOWN_ICC_PROFILES) {
+            if (raw.includes(profileName) && !iccProfiles.includes(profileName)) {
+              iccProfiles.push(profileName);
+            }
+          }
+          // Also check for /ICCBased presence to signal unknown embedded profile
+          if (iccProfiles.length === 0 && raw.includes('/ICCBased')) {
+            // There is an ICC profile but we can't name it from the stream alone
+            iccProfiles.push('(embedded ICC)');
+          }
+        } catch { /* ignore */ }
+
+      } catch (err) {
+        console.warn('parsePdfFallback error:', err);
+      }
+
+      return { width, height, pageCount, creator, pdfXLevel, renderingIntent, iccProfiles };
+    }
+
+    /**
+     * Extract PDF metadata from the given PDF byte array.
+     *
+     * Strategy:
+     *  1. If pdfcpuReady is false, skip WASM and go straight to fallback.
+     *  2. If pdfcpuReady is true, attempt to call globalThis.pdfcpuInfo or
+     *     globalThis.pdfcpu?.info with the pdfBytes Uint8Array.
+     *  3. If the WASM call succeeds and returns parseable JSON, use those values.
+     *  4. For any field that is still missing (or on any WASM error), fill gaps
+     *     using parsePdfFallback().
+     *
+     * All errors are caught — the function never throws.
+     * Fields that cannot be extracted are returned as null.
+     * iccProfiles is always an array (may be empty).
+     *
+     * After building the Meta object, AppState.meta is populated.
+     *
+     * @param {Uint8Array} pdfBytes
+     * @returns {Promise<{
+     *   width: number|null,
+     *   height: number|null,
+     *   pageCount: number|null,
+     *   creator: string|null,
+     *   pdfXLevel: string|null,
+     *   renderingIntent: string|null,
+     *   iccProfiles: string[]
+     * }>}
+     */
+    async function extractMetadata(pdfBytes) {
+      /** @type {Record<string,any>} */
+      let wasmMeta = null;
+
+      // ── Step 1 & 2: Attempt pdfcpu WASM call ─────────────────────
+      if (pdfcpuReady) {
+        try {
+          // Try globalThis.pdfcpuInfo first, then globalThis.pdfcpu?.info
+          let rawResult = null;
+          if (typeof globalThis.pdfcpuInfo === 'function') {
+            rawResult = await Promise.resolve(globalThis.pdfcpuInfo(pdfBytes));
+          } else if (globalThis.pdfcpu && typeof globalThis.pdfcpu.info === 'function') {
+            rawResult = await Promise.resolve(globalThis.pdfcpu.info(pdfBytes));
+          }
+
+          // ── Step 3: Parse WASM result ─────────────────────────────
+          if (rawResult != null) {
+            if (typeof rawResult === 'string') {
+              try { wasmMeta = JSON.parse(rawResult); } catch { /* not JSON */ }
+            } else if (typeof rawResult === 'object') {
+              wasmMeta = rawResult;
+            }
+          }
+        } catch (err) {
+          console.warn('pdfcpu WASM metadata call failed, using fallback:', err);
+        }
+      }
+
+      // ── Step 4: Fill from fallback ────────────────────────────────
+      const fallback = parsePdfFallback(pdfBytes);
+
+      // Helper: pick first non-null, non-undefined value
+      const pick = (...vals) => {
+        for (const v of vals) {
+          if (v !== null && v !== undefined && v !== '') return v;
+        }
+        return null;
+      };
+
+      // Normalise WASM result field names (pdfcpu may use camelCase or snake_case)
+      const w = wasmMeta;
+      const meta = {
+        width: pick(
+          w?.width ?? w?.Width ?? w?.page_width ?? null,
+          fallback.width
+        ),
+        height: pick(
+          w?.height ?? w?.Height ?? w?.page_height ?? null,
+          fallback.height
+        ),
+        pageCount: pick(
+          w?.pageCount ?? w?.PageCount ?? w?.page_count ?? w?.pages ?? null,
+          fallback.pageCount
+        ),
+        creator: pick(
+          w?.creator ?? w?.Creator ?? null,
+          fallback.creator
+        ),
+        pdfXLevel: pick(
+          w?.pdfXLevel ?? w?.PDFXLevel ?? w?.pdf_x_level ?? w?.pdfx ?? null,
+          fallback.pdfXLevel
+        ),
+        renderingIntent: pick(
+          w?.renderingIntent ?? w?.RenderingIntent ?? w?.rendering_intent ?? null,
+          fallback.renderingIntent
+        ),
+        iccProfiles: (() => {
+          // Prefer WASM result if it's a non-empty array
+          const wasmProfiles = w?.iccProfiles ?? w?.ICCProfiles ?? w?.icc_profiles ?? null;
+          if (Array.isArray(wasmProfiles) && wasmProfiles.length > 0) return wasmProfiles;
+          return fallback.iccProfiles; // always an array (may be empty)
+        })(),
+      };
+
+      // Ensure numeric fields are actually numbers (WASM may return strings)
+      if (typeof meta.width === 'string') {
+        const n = parseFloat(meta.width);
+        meta.width = isNaN(n) ? null : n;
+      }
+      if (typeof meta.height === 'string') {
+        const n = parseFloat(meta.height);
+        meta.height = isNaN(n) ? null : n;
+      }
+      if (typeof meta.pageCount === 'string') {
+        const n = parseInt(meta.pageCount, 10);
+        meta.pageCount = isNaN(n) ? null : n;
+      }
+
+      // Populate AppState.meta
+      AppState.meta = meta;
+
+      return meta;
+    }
+
+    // ── Placeholder: remaining modules added in subsequent tasks ──
+    // (RenderModule, AnnotationModule, ScreenshotModule, SaveModule,
+    //  and UI event wiring will be implemented in tasks 3.2 through 12.1)
+
+    // ── About dialog ─────────────────────────────────────────────
+    document.getElementById('btn-about').addEventListener('click', () => {
+      document.getElementById('about-dialog').showModal();
+    });
+    document.getElementById('btn-about-close').addEventListener('click', () => {
+      document.getElementById('about-dialog').close();
+    });
+
+    // ── RenderModule ─────────────────────────────────────────────
+
+    /**
+     * Load a PDF document with PDF.js and store it in AppState.
+     * @param {Uint8Array} pdfBytes
+     * @returns {Promise<PDFDocumentProxy>}
+     */
+    async function loadPdf(pdfBytes) {
+      try {
+        const doc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+        AppState.pdfJsDoc = doc;
+        AppState.pageCount = doc.numPages;
+        // Update the max value of start-page-input now that we know page count
+        document.getElementById('start-page-input').max = doc.numPages;
+        return doc;
+      } catch (err) {
+        showError(`Failed to load PDF: ${err.message ?? err}`);
+        document.getElementById('btn-present').disabled = true;
+        throw err; // re-throw so the file load pipeline catch block doesn't double-enable the button
+      }
+    }
+
+    /**
+     * Render a single PDF page to the given canvas at native resolution (scale 1.0).
+     * @param {Object} doc - PDF.js PDFDocumentProxy
+     * @param {number} pageNum - 1-based page number
+     * @param {HTMLCanvasElement} canvas - Target canvas element
+     * @returns {Promise<void>}
+     */
+    async function renderPage(doc, pageNum, canvas) {
+      try {
+        const page = await doc.getPage(pageNum);
+        const viewport = page.getViewport({ scale: 1.0 });
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        const ctx = canvas.getContext('2d');
+        await page.render({ canvasContext: ctx, viewport }).promise;
+      } catch (err) {
+        // Show error overlay in Presenter View without exiting
+        showError(`Page render error (page ${pageNum}): ${err.message ?? err}`);
+        // Do NOT throw — stay in presenter mode
+      }
+    }
+
+    // ── File load pipeline ─────────────────────────────────────────
+    document.getElementById('file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      try {
+        // 1. Read file as ArrayBuffer → Uint8Array
+        const arrayBuffer = await file.arrayBuffer();
+        AppState.pdfBytes = new Uint8Array(arrayBuffer);
+
+        // 2. Store filename without extension
+        AppState.originalFileName = file.name.replace(/\.pdf$/i, '');
+
+        // 3. Reset state
+        AppState.screenshotBuffer = null;
+        AppState.screenshotPage = null;
+        AppState.resumePage = 1;
+
+        // 4. Update UI resets
+        document.getElementById('btn-download-screenshot').disabled = true;
+        document.getElementById('start-page-input').value = '1';
+        document.getElementById('btn-present').disabled = true; // disable while loading
+
+        // 5. Show filename in metadata panel
+        document.getElementById('metadata-panel').classList.add('visible');
+        document.getElementById('meta-filename').textContent = file.name;
+
+        // 6. Extract metadata
+        const meta = await extractMetadata(AppState.pdfBytes);
+
+        // 7. Populate metadata panel
+        document.getElementById('meta-size').textContent =
+          (meta.width != null && meta.height != null)
+            ? `${meta.width} × ${meta.height} pt`
+            : 'N/A';
+        document.getElementById('meta-viewport').textContent =
+          `${window.innerWidth} × ${window.innerHeight}`;
+        document.getElementById('meta-page-count').textContent =
+          meta.pageCount != null ? String(meta.pageCount) : 'N/A';
+        document.getElementById('meta-creator').textContent =
+          meta.creator ?? 'N/A';
+        document.getElementById('meta-pdfx').textContent =
+          meta.pdfXLevel ?? 'N/A';
+        document.getElementById('meta-rendering-intent').textContent =
+          meta.renderingIntent ?? 'N/A';
+        document.getElementById('meta-icc').textContent =
+          meta.iccProfiles.length > 0 ? meta.iccProfiles.join(', ') : 'N/A';
+
+        // 8. Load PDF with PDF.js
+        await loadPdf(AppState.pdfBytes);
+
+        // 9. Enable present button
+        document.getElementById('btn-present').disabled = false;
+
+      } catch (err) {
+        showError(`Failed to load PDF: ${err.message ?? err}`);
+        document.getElementById('btn-present').disabled = true;
+      }
+    });
+
+  </script>
+
+</body>
+</html>
