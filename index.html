@@ -278,6 +278,9 @@
       max-height: 100vh;
       object-fit: contain; /* Ensures aspect ratio is preserved */
       image-rendering: auto;
+      image-rendering: high-quality;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: smooth;
     }
 
     #annotation-canvas {
@@ -289,6 +292,9 @@
       max-height: 100vh;
       object-fit: contain;
       image-rendering: auto;
+      image-rendering: high-quality;
+      image-rendering: -webkit-optimize-contrast;
+      image-rendering: smooth;
     }
   </style>
 </head>
@@ -1613,7 +1619,7 @@
 
     /**
      * Render a single PDF page to the given canvas at optimal resolution.
-     * Uses device pixel ratio to ensure crisp rendering on all displays.
+     * Renders at high resolution then scales down for smooth anti-aliasing.
      * @param {Object} doc - PDF.js PDFDocumentProxy
      * @param {number} pageNum - 1-based page number
      * @param {HTMLCanvasElement} canvas - Target canvas element
@@ -1626,22 +1632,23 @@
         // Get base viewport to determine page dimensions
         const baseViewport = page.getViewport({ scale: 1.0 });
 
-        // Calculate scale to fit screen while maintaining aspect ratio
+        // Calculate scale to fill screen completely (no margins)
         const scaleX = window.innerWidth / baseViewport.width;
         const scaleY = window.innerHeight / baseViewport.height;
-        const displayScale = Math.min(scaleX, scaleY) * 0.95; // 95% to add small margin
+        const displayScale = Math.min(scaleX, scaleY);
 
-        // Use device pixel ratio for crisp rendering (minimum 3x for quality)
-        const pixelRatio = window.devicePixelRatio || 1;
-        const renderScale = displayScale * Math.max(pixelRatio, 3);
+        // Render at much higher resolution (4x-5x) for smooth downscaling
+        // This is the key: high internal resolution + CSS downscaling = smooth result
+        const superSampleScale = 4.0; // Increase this if still pixelated (try 5.0 or 6.0)
+        const renderScale = displayScale * superSampleScale;
 
         const viewport = page.getViewport({ scale: renderScale });
 
-        // Set canvas internal resolution to match render scale
+        // Set canvas internal resolution to high render scale
         canvas.width = viewport.width;
         canvas.height = viewport.height;
 
-        // Set CSS size to display scale (actual screen size)
+        // Set CSS size to exact display scale (fills screen 100%)
         const displayWidth = baseViewport.width * displayScale;
         const displayHeight = baseViewport.height * displayScale;
         canvas.style.width = `${displayWidth}px`;
@@ -1652,9 +1659,8 @@
           desynchronized: true,
         });
 
-        // Enable image smoothing for better quality
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
+        // Disable smoothing during PDF render for crisp text
+        ctx.imageSmoothingEnabled = false;
 
         await page.render({
           canvasContext: ctx,
