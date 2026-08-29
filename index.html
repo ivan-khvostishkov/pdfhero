@@ -1611,15 +1611,35 @@
     async function renderPage(doc, pageNum, canvas) {
       try {
         const page = await doc.getPage(pageNum);
-        const viewport = page.getViewport({ scale: 1.0 });
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+
+        // Get the base viewport at scale 1.0 to read dimensions
+        const baseViewport = page.getViewport({ scale: 1.0 });
+
+        // Calculate optimal scale to avoid fractional pixels
+        // Use 2x or 3x scale for high DPI rendering
+        const dpiScale = 3.0; // or 3.0 for even higher quality
+
+        // Alternative: calculate scale to match screen dimensions exactly
+        // const screenScale = Math.max(
+        //   window.innerWidth / baseViewport.width,
+        //   window.innerHeight / baseViewport.height
+        // );
+        // const dpiScale = Math.ceil(screenScale);
+
+        const viewport = page.getViewport({ scale: dpiScale });
+
+        // Set canvas to render at higher resolution
+        canvas.width = Math.round(viewport.width);
+        canvas.height = Math.round(viewport.height);
+
+        // Scale down display via CSS to show at intended size
+        canvas.style.width = Math.round(baseViewport.width) + 'px';
+        canvas.style.height = Math.round(baseViewport.height) + 'px';
+
         const ctx = canvas.getContext('2d');
         await page.render({ canvasContext: ctx, viewport }).promise;
       } catch (err) {
-        // Show error overlay in Presenter View without exiting
         showError(`Page render error (page ${pageNum}): ${err.message ?? err}`);
-        // Do NOT throw — stay in presenter mode
       }
     }
 
@@ -1703,8 +1723,13 @@
 
     /** Match annotation canvas size to the PDF canvas. */
     function syncAnnotationCanvasSize() {
+      // Match the internal resolution
       annotationCanvas.width  = pdfCanvas.width;
       annotationCanvas.height = pdfCanvas.height;
+
+      // Match the CSS display size
+      annotationCanvas.style.width = pdfCanvas.style.width;
+      annotationCanvas.style.height = pdfCanvas.style.height;
     }
 
     /** Enter full-screen presenter view starting at the chosen page. */
@@ -1798,13 +1823,15 @@
     annotationCanvas.addEventListener('mousemove', (e) => {
       annotationCanvas.style.cursor = 'crosshair';
       if (AppState.activeStroke) {
-        continueStroke(e.offsetX, e.offsetY);
+        const scale = annotationCanvas.width / annotationCanvas.offsetWidth;
+        continueStroke(e.offsetX * scale, e.offsetY * scale);
       }
     });
 
     annotationCanvas.addEventListener('mousedown', (e) => {
       annotationCanvas.style.cursor = 'none';
-      beginStroke(e.offsetX, e.offsetY);
+      const scale = annotationCanvas.width / annotationCanvas.offsetWidth;
+      beginStroke(e.offsetX * scale, e.offsetY * scale);
     });
 
     annotationCanvas.addEventListener('mouseup', () => {
