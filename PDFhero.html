@@ -1037,14 +1037,13 @@
      *               and leaves pdfcpuReady = false so the rest of the app
      *               continues to function (file selection remains enabled).
      *
-     * CDN URL: https://github.com/pdfcpu/pdfcpu/releases/download/v0.8.1/pdfcpu_wasm.wasm
+     * Local file: ./pdfcpu.wasm (v0.15.0 — served alongside PDFhero.html)
      *
      * @returns {Promise<void>}
      */
     async function initPdfcpu() {
-      // pdfcpu WASM CDN — pinned to v0.8.1 release
-      const PDFCPU_WASM_URL =
-        'https://github.com/pdfcpu/pdfcpu/releases/download/v0.8.1/pdfcpu_wasm.wasm';
+      // pdfcpu WASM — served locally as pdfcpu.wasm (v0.15.0) alongside PDFhero.html
+      const PDFCPU_WASM_URL = './pdfcpu.wasm';
 
       try {
         const go = new Go(); // Go class provided by inlined wasm_exec.js

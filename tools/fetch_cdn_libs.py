@@ -16,6 +16,9 @@ from pathlib import Path
 # ── Library manifest ──────────────────────────────────────────────────────────
 # Each entry mirrors the CDN assets referenced by PDFhero.html and sw.js.
 # Update 'url' and 'local_path' whenever a library version is bumped.
+#
+# NOTE: pdfcpu.wasm (v0.15.0) is NOT listed here — it is served as a local
+# file alongside PDFhero.html and does not have a CDN URL.
 LIBRARIES = [
     {
         "name": "PDF.js",
