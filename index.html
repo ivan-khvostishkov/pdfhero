@@ -1638,7 +1638,7 @@
         const displayScale = Math.min(scaleX, scaleY);
 
         // Render at high resolution (3x-4x display size)
-        const superSampleScale = 3.0;
+        const superSampleScale = 6.0;
         const renderScale = displayScale * superSampleScale;
 
         const viewport = page.getViewport({ scale: renderScale });
