@@ -98,7 +98,7 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - After `renderPage` completes, assert `pdf-canvas.width === pageViewport.width` and `annotation-canvas.width === pdf-canvas.width` (and same for height)
 
 - [ ] 6. Implement AnnotationModule
-  - [ ] 6.1 Implement stroke begin / continue / end and canvas redraw
+  - [x] 6.1 Implement stroke begin / continue / end and canvas redraw
     - Implement `beginStroke(x, y)`: clear `redoStack` for current page, create new `Stroke` `{points:[{x,y}], color:'#FF0000', lineWidth:3}`, assign to `AppState.activeStroke`
     - Implement `continueStroke(x, y)`: push `{x,y}` to `activeStroke.points`; clear annotation canvas; call `redrawCanvas(ctx)` for all committed strokes; then draw active stroke using bezier algorithm
     - Implement `endStroke()`: push `activeStroke` to `AppState.strokes.get(currentPage)`; set `activeStroke = null`

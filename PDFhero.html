@@ -1410,9 +1410,167 @@
       return meta;
     }
 
-    // ── Placeholder: remaining modules added in subsequent tasks ──
-    // (RenderModule, AnnotationModule, ScreenshotModule, SaveModule,
-    //  and UI event wiring will be implemented in tasks 3.2 through 12.1)
+    // ── AnnotationModule ──────────────────────────────────────────
+
+    /**
+     * Begin recording a new stroke at (x, y).
+     * Clears the redo stack for the current page so that
+     * new drawing invalidates any undone strokes (Req 6.6).
+     * @param {number} x
+     * @param {number} y
+     */
+    function beginStroke(x, y) {
+      // Clear redo stack for current page
+      AppState.redoStack.set(AppState.currentPage, []);
+      // Start a new stroke
+      AppState.activeStroke = {
+        points: [{ x, y }],
+        color: '#FF0000',
+        lineWidth: 3,
+      };
+    }
+
+    /**
+     * Append a point to the active stroke and redraw the canvas.
+     * Clears the annotation canvas, redraws committed strokes,
+     * then draws the in-progress stroke using the bezier algorithm.
+     * @param {number} x
+     * @param {number} y
+     */
+    function continueStroke(x, y) {
+      if (!AppState.activeStroke) return;
+      AppState.activeStroke.points.push({ x, y });
+
+      const canvas = document.getElementById('annotation-canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Redraw all committed strokes
+      redrawCanvas(ctx);
+
+      // Draw the active (in-progress) stroke
+      drawStroke(ctx, AppState.activeStroke);
+    }
+
+    /**
+     * Finalise the current stroke: append it to the committed history
+     * for the current page and clear AppState.activeStroke.
+     */
+    function endStroke() {
+      if (!AppState.activeStroke) return;
+
+      const page = AppState.currentPage;
+      if (!AppState.strokes.has(page)) {
+        AppState.strokes.set(page, []);
+      }
+      AppState.strokes.get(page).push(AppState.activeStroke);
+      AppState.activeStroke = null;
+    }
+
+    /**
+     * Redraw all committed strokes for the current page onto the given context.
+     * Does NOT clear the canvas first — callers are responsible for clearing
+     * when needed (e.g. continueStroke clears before calling this).
+     * @param {CanvasRenderingContext2D} ctx
+     */
+    function redrawCanvas(ctx) {
+      const page = AppState.currentPage;
+      const strokes = AppState.strokes.get(page) ?? [];
+      for (const stroke of strokes) {
+        drawStroke(ctx, stroke);
+      }
+    }
+
+    /**
+     * Draw a single stroke onto a canvas context using the midpoint
+     * quadratic bezier algorithm for smooth curves.
+     *
+     * Algorithm:
+     *  - moveTo first point
+     *  - for each interior point i, compute the midpoint between i and i+1,
+     *    then quadraticCurveTo(pts[i], midpoint) — this avoids sharp corners
+     *  - lineTo the final point
+     *
+     * @param {CanvasRenderingContext2D} ctx
+     * @param {{ points: {x:number,y:number}[], color: string, lineWidth: number }} stroke
+     */
+    function drawStroke(ctx, stroke) {
+      const pts = stroke.points;
+      if (pts.length < 2) return;
+
+      ctx.save();
+      ctx.strokeStyle = stroke.color;
+      ctx.lineWidth = stroke.lineWidth;
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+
+      for (let i = 1; i < pts.length - 1; i++) {
+        const mx = (pts[i].x + pts[i + 1].x) / 2;
+        const my = (pts[i].y + pts[i + 1].y) / 2;
+        ctx.quadraticCurveTo(pts[i].x, pts[i].y, mx, my);
+      }
+
+      // Draw to the final point
+      const last = pts[pts.length - 1];
+      ctx.lineTo(last.x, last.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    /**
+     * Undo the most recently committed stroke on the current page.
+     * Moves the stroke to the redo stack and redraws the canvas.
+     */
+    function undo() {
+      const page = AppState.currentPage;
+      const history = AppState.strokes.get(page) ?? [];
+      if (history.length === 0) return;
+
+      const stroke = history.pop();
+      if (!AppState.redoStack.has(page)) AppState.redoStack.set(page, []);
+      AppState.redoStack.get(page).push(stroke);
+
+      const canvas = document.getElementById('annotation-canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      redrawCanvas(ctx);
+    }
+
+    /**
+     * Redo the most recently undone stroke on the current page.
+     * Moves the stroke from the redo stack back to history and redraws.
+     */
+    function redo() {
+      const page = AppState.currentPage;
+      const stack = AppState.redoStack.get(page) ?? [];
+      if (stack.length === 0) return;
+
+      const stroke = stack.pop();
+      if (!AppState.strokes.has(page)) AppState.strokes.set(page, []);
+      AppState.strokes.get(page).push(stroke);
+
+      const canvas = document.getElementById('annotation-canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      redrawCanvas(ctx);
+    }
+
+    /**
+     * Erase all strokes and the redo stack for the current page.
+     * Clears the annotation canvas completely.
+     */
+    function eraseAll() {
+      const page = AppState.currentPage;
+      AppState.strokes.set(page, []);
+      AppState.redoStack.set(page, []);
+
+      const canvas = document.getElementById('annotation-canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
 
     // ── About dialog ─────────────────────────────────────────────
     document.getElementById('btn-about').addEventListener('click', () => {
