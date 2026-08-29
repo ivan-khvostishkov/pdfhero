@@ -1,6 +1,6 @@
 // PDFhero Service Worker — cache-first strategy
 // Cache name and manifest.json version MUST be updated together on every release.
-const CACHE_NAME = 'pdfhero-v1.01.2';
+const CACHE_NAME = 'pdfhero-v1.01.4';
 
 const CACHED_URLS = [
   './PDFhero.html',
