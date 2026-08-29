@@ -117,6 +117,10 @@
       color: #888;
     }
 
+    .meta-source-pdfcpu   { color: #4caf8a; }  /* green-ish: full pdfcpu */
+    .meta-source-fallback { color: #e0a040; }  /* amber: direct parsing only */
+    .meta-source-partial  { color: #b0b040; }  /* yellow: mixed */
+
     /* Present controls row */
     #present-controls {
       display: flex;
@@ -320,6 +324,7 @@
       <div class="meta-row"><span class="meta-label">PDF/X level</span><span id="meta-pdfx"></span></div>
       <div class="meta-row"><span class="meta-label">Rendering intent</span><span id="meta-rendering-intent"></span></div>
       <div class="meta-row"><span class="meta-label">ICC profiles</span><span id="meta-icc"></span></div>
+      <div class="meta-row"><span class="meta-label">Metadata source</span><span id="meta-source"></span></div>
     </div>
 
     <!-- Present controls -->
@@ -1292,6 +1297,10 @@
       /** @type {Record<string,any>} */
       let wasmMeta = null;
 
+      // Tracks which extraction path(s) were used
+      // 'pdfcpu' | 'fallback' | 'pdfcpu+fallback'
+      let metaSource = 'fallback';
+
       // ── Step 1 & 2: Attempt pdfcpu WASM call ─────────────────────
       if (pdfcpuReady) {
         try {
@@ -1310,6 +1319,10 @@
             } else if (typeof rawResult === 'object') {
               wasmMeta = rawResult;
             }
+          }
+
+          if (wasmMeta != null) {
+            metaSource = 'pdfcpu';
           }
         } catch (err) {
           console.warn('pdfcpu WASM metadata call failed, using fallback:', err);
@@ -1375,6 +1388,21 @@
         const n = parseInt(meta.pageCount, 10);
         meta.pageCount = isNaN(n) ? null : n;
       }
+
+      // Determine final source label:
+      // If pdfcpu ran but some fields still came from fallback, report both.
+      if (metaSource === 'pdfcpu') {
+        const w = wasmMeta;
+        const wasmHadAllFields =
+          (w?.width ?? w?.Width ?? w?.page_width) != null &&
+          (w?.height ?? w?.Height ?? w?.page_height) != null &&
+          (w?.pageCount ?? w?.PageCount ?? w?.page_count ?? w?.pages) != null &&
+          (w?.creator ?? w?.Creator) != null;
+        if (!wasmHadAllFields) {
+          metaSource = 'pdfcpu + direct parsing (partial)';
+        }
+      }
+      meta.source = metaSource;
 
       // Populate AppState.meta
       AppState.meta = meta;
@@ -1485,6 +1513,17 @@
           meta.renderingIntent ?? 'N/A';
         document.getElementById('meta-icc').textContent =
           meta.iccProfiles.length > 0 ? meta.iccProfiles.join(', ') : 'N/A';
+        const metaSourceEl = document.getElementById('meta-source');
+        if (meta.source === 'pdfcpu') {
+          metaSourceEl.textContent = 'pdfcpu WASM';
+          metaSourceEl.className = 'meta-source-pdfcpu';
+        } else if (meta.source === 'fallback') {
+          metaSourceEl.textContent = 'direct parsing';
+          metaSourceEl.className = 'meta-source-fallback';
+        } else {
+          metaSourceEl.textContent = meta.source ?? 'N/A';
+          metaSourceEl.className = 'meta-source-partial';
+        }
 
         // 8. Load PDF with PDF.js
         await loadPdf(AppState.pdfBytes);
