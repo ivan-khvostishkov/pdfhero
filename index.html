@@ -1619,7 +1619,7 @@
 
     /**
      * Render a single PDF page to the given canvas at optimal resolution.
-     * Renders at high resolution then scales down for smooth anti-aliasing.
+     * Uses canvas smoothing for high-quality anti-aliased downscaling.
      * @param {Object} doc - PDF.js PDFDocumentProxy
      * @param {number} pageNum - 1-based page number
      * @param {HTMLCanvasElement} canvas - Target canvas element
@@ -1637,36 +1637,51 @@
         const scaleY = window.innerHeight / baseViewport.height;
         const displayScale = Math.min(scaleX, scaleY);
 
-        // Render at much higher resolution (4x-5x) for smooth downscaling
-        // This is the key: high internal resolution + CSS downscaling = smooth result
-        const superSampleScale = 4.0; // Increase this if still pixelated (try 5.0 or 6.0)
+        // Render at high resolution (3x-4x display size)
+        const superSampleScale = 3.0;
         const renderScale = displayScale * superSampleScale;
 
         const viewport = page.getViewport({ scale: renderScale });
 
-        // Set canvas internal resolution to high render scale
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        // Create temporary high-res canvas for PDF rendering
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = viewport.width;
+        tempCanvas.height = viewport.height;
 
-        // Set CSS size to exact display scale (fills screen 100%)
+        const tempCtx = tempCanvas.getContext('2d', {
+          alpha: false,
+        });
+
+        // Render PDF at high resolution
+        await page.render({
+          canvasContext: tempCtx,
+          viewport: viewport,
+          intent: 'display',
+        }).promise;
+
+        // Now set display canvas to exact screen size
         const displayWidth = baseViewport.width * displayScale;
         const displayHeight = baseViewport.height * displayScale;
+
+        canvas.width = displayWidth;
+        canvas.height = displayHeight;
         canvas.style.width = `${displayWidth}px`;
         canvas.style.height = `${displayHeight}px`;
 
+        // Get display context with smoothing enabled
         const ctx = canvas.getContext('2d', {
           alpha: false,
           desynchronized: true,
         });
 
-        // Disable smoothing during PDF render for crisp text
-        ctx.imageSmoothingEnabled = false;
+        // Enable high-quality smoothing for downscaling
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
 
-        await page.render({
-          canvasContext: ctx,
-          viewport: viewport,
-          intent: 'display',
-        }).promise;
+        // Draw the high-res temp canvas onto display canvas
+        // The browser will apply smooth downscaling
+        ctx.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height,
+                0, 0, canvas.width, canvas.height);
 
       } catch (err) {
         showError(`Page render error (page ${pageNum}): ${err.message ?? err}`);
