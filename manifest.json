@@ -1,8 +1,8 @@
 {
   "name": "PDFhero Presenter",
   "short_name": "PDFhero",
-  "version": "1.01.4",
-  "start_url": "./PDFhero.html",
+  "version": "1.01.7",
+  "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#1a1a2e",
   "theme_color": "#e94560",

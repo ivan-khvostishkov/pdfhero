@@ -274,8 +274,8 @@
 
     #pdf-canvas {
       display: block;
-      max-width: 100vw;
-      max-height: 100vh;
+      /* Remove max-width and max-height to prevent scaling */
+      /* The canvas will render at native PDF resolution */
     }
 
     #annotation-canvas {
