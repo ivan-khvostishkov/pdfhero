@@ -67,8 +67,8 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8**
     - For a corpus of test PDFs (including one with missing fields), assert every displayed field is a non-empty string (never `undefined`, `null`, or `""`)
 
-- [ ] 4. Implement file selection and metadata display
-  - [-] 4.1 Wire file input to load pipeline
+- [x] 4. Implement file selection and metadata display
+  - [x] 4.1 Wire file input to load pipeline
     - On `change` event of `#file-input`, read file as `ArrayBuffer`, convert to `Uint8Array`, store as `AppState.pdfBytes`
     - Store the filename (without extension) in `AppState.originalFileName`
     - Display filename at the top of `#metadata-panel`
@@ -84,8 +84,8 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - Wire `#btn-about-close` to call `.close()` on the dialog
     - _Requirements: 2.3_
 
-- [ ] 5. Implement RenderModule (PDF.js)
-  - [ ] 5.1 Implement `loadPdf(pdfBytes)` and `renderPage(doc, pageNum, canvas)`
+- [x] 5. Implement RenderModule (PDF.js)
+  - [x] 5.1 Implement `loadPdf(pdfBytes)` and `renderPage(doc, pageNum, canvas)`
     - `loadPdf`: call `pdfjsLib.getDocument({ data: pdfBytes }).promise`; store result in `AppState.pdfJsDoc`; store `numPages` in `AppState.pageCount`; return `PDFDocumentProxy`
     - `renderPage`: call `doc.getPage(pageNum)`, get viewport with `scale: 1.0`, set `canvas.width` and `canvas.height` to viewport dimensions, render to canvas context
     - On `loadPdf` error, show error banner and keep Present button disabled
@@ -98,7 +98,7 @@ Build `PDFhero.html` as a single self-contained file with all JavaScript inline.
     - After `renderPage` completes, assert `pdf-canvas.width === pageViewport.width` and `annotation-canvas.width === pdf-canvas.width` (and same for height)
 
 - [ ] 6. Implement AnnotationModule
-  - [~] 6.1 Implement stroke begin / continue / end and canvas redraw
+  - [ ] 6.1 Implement stroke begin / continue / end and canvas redraw
     - Implement `beginStroke(x, y)`: clear `redoStack` for current page, create new `Stroke` `{points:[{x,y}], color:'#FF0000', lineWidth:3}`, assign to `AppState.activeStroke`
     - Implement `continueStroke(x, y)`: push `{x,y}` to `activeStroke.points`; clear annotation canvas; call `redrawCanvas(ctx)` for all committed strokes; then draw active stroke using bezier algorithm
     - Implement `endStroke()`: push `activeStroke` to `AppState.strokes.get(currentPage)`; set `activeStroke = null`
