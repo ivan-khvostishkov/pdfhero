@@ -79,13 +79,17 @@
       font-weight: 600;
     }
 
-    /* File input */
+    /* File input (hidden — triggered via the metadata header label) */
     #file-input {
-      cursor: pointer;
-      color: #e0e0e0;
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      overflow: hidden;
+      clip: rect(0 0 0 0);
     }
 
-    /* Metadata panel */
+    /* Metadata panel (always visible) */
     #metadata-panel {
       background: #16213e;
       border: 1px solid #0f3460;
@@ -93,18 +97,21 @@
       padding: 12px 16px;
       font-size: 0.88rem;
       min-height: 48px;
-      display: none; /* shown after file load */
     }
 
-    #metadata-panel.visible { display: block; }
-
+    /* Header line — acts as the "Choose file" button, becomes filename after load */
     #metadata-panel .meta-filename {
+      display: inline-block;
       font-weight: 600;
       font-size: 1rem;
       color: #e94560;
       margin-bottom: 8px;
       word-break: break-all;
+      cursor: pointer;
+      user-select: none;
     }
+
+    #metadata-panel .meta-filename:hover { text-decoration: underline; }
 
     .meta-row {
       display: flex;
@@ -116,6 +123,18 @@
       min-width: 160px;
       color: #888;
     }
+
+    /* Viewport row — a browser/window property, not PDF metadata. Set apart. */
+    .meta-row.meta-viewport-row {
+      background: #0f2a4a;
+      border-left: 3px solid #4a9ede;
+      border-radius: 4px;
+      padding: 4px 8px;
+      margin-bottom: 8px;
+    }
+
+    .meta-row.meta-viewport-row .meta-label { color: #7fbce8; }
+    .meta-row.meta-viewport-row #meta-viewport { color: #cfe6f8; font-weight: 600; }
 
     .meta-source-pdfcpu   { color: #4caf8a; }  /* green-ish: full pdfcpu */
     .meta-source-fallback { color: #e0a040; }  /* amber: direct parsing only */
@@ -196,6 +215,9 @@
       z-index: 9999;
       width: min(600px, 90vw);
     }
+
+    /* Errors are never shown during presentation — only on the landing page. */
+    #error-container.presenting { display: none; }
 
     .error-alert {
       background: #5c1a1a;
@@ -311,26 +333,14 @@
       <button id="btn-about">About</button>
     </div>
 
-    <!-- Shortcut legend — 9 shortcuts -->
-    <div id="shortcut-legend">
-      <h2>Keyboard shortcuts (presenter view)</h2>
-      <div class="shortcut-row"><span class="shortcut-key">→ / Page Down</span><span>Next page</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">← / Page Up</span><span>Previous page</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">Q</span><span>Exit presenter view</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">E</span><span>Erase all annotations</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">U</span><span>Undo last stroke</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">Z</span><span>Redo last undone stroke</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">S</span><span>Capture screenshot</span></div>
-    </div>
-
-    <!-- File selector -->
+    <!-- Hidden file input — triggered via the metadata header label -->
     <input type="file" id="file-input" accept=".pdf" aria-label="Select a PDF file" />
 
-    <!-- Metadata panel (hidden until a file is loaded) -->
+    <!-- Metadata panel (always visible; header doubles as the file chooser) -->
     <div id="metadata-panel" role="region" aria-label="PDF metadata">
-      <div class="meta-filename" id="meta-filename"></div>
+      <label class="meta-filename" id="meta-filename" for="file-input">Choose file</label>
+      <div class="meta-row meta-viewport-row"><span class="meta-label">Viewport size</span><span id="meta-viewport"></span></div>
       <div class="meta-row"><span class="meta-label">Document size</span><span id="meta-size"></span></div>
-      <div class="meta-row"><span class="meta-label">Viewport size</span><span id="meta-viewport"></span></div>
       <div class="meta-row"><span class="meta-label">Page count</span><span id="meta-page-count"></span></div>
       <div class="meta-row"><span class="meta-label">Creator</span><span id="meta-creator"></span></div>
       <div class="meta-row"><span class="meta-label">PDF/X level</span><span id="meta-pdfx"></span></div>
@@ -349,6 +359,19 @@
     <button id="btn-save">Save with annotations</button>
     <button id="btn-download-screenshot" disabled>Download screenshot</button>
 
+    <!-- Shortcut legend — moved after the metadata / present block -->
+    <div id="shortcut-legend">
+      <h2>Keyboard shortcuts (presenter view)</h2>
+      <div class="shortcut-row"><span class="shortcut-key">P</span><span>Present as a hero (enter presenter view)</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">→ / Page Down</span><span>Next page</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">← / Page Up</span><span>Previous page</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Q</span><span>Exit presenter view</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">E</span><span>Erase all annotations</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">U</span><span>Undo last stroke</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Z</span><span>Redo last undone stroke</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">S</span><span>Capture screenshot</span></div>
+    </div>
+
   </section>
 
   <!-- ── Presenter View ──────────────────────────────────────────── -->
@@ -365,7 +388,8 @@
   <dialog id="about-dialog" aria-labelledby="about-title">
     <p id="about-title">
       PDFhero by NoSocial.Net and Ivan Khvostishkov, copyright 2026+.<br>
-      Created together with Kiro.
+      Created together with Kiro.<br>
+      <span id="about-version"></span>
     </p>
     <button id="btn-about-close">Close</button>
   </dialog>
@@ -1595,6 +1619,16 @@
       document.getElementById('about-dialog').close();
     });
 
+    // Show the app version from the manifest (kept in sync with manifest.json).
+    fetch('manifest.json')
+      .then((res) => res.json())
+      .then((mf) => {
+        if (mf.version) {
+          document.getElementById('about-version').textContent = `Version ${mf.version}`;
+        }
+      })
+      .catch(() => { /* non-fatal — just omit the version line */ });
+
     // ── RenderModule ─────────────────────────────────────────────
 
     /**
@@ -1705,8 +1739,7 @@
         document.getElementById('start-page-input').value = '1';
         document.getElementById('btn-present').disabled = true; // disable while loading
 
-        // 5. Show filename in metadata panel
-        document.getElementById('metadata-panel').classList.add('visible');
+        // 5. Header label becomes the filename (replaces "Choose file")
         document.getElementById('meta-filename').textContent = file.name;
 
         // 6. Extract metadata
@@ -1788,16 +1821,61 @@
       presenterSection.classList.add('active');
       AppState.isPresenting = true;
 
-      // Render the starting page
+      // Suppress error popups while presenting (they reappear on exit).
+      document.getElementById('error-container').classList.add('presenting');
+
+      // Request fullscreen FIRST (failure is non-fatal). The first page must be
+      // rendered at the fullscreen viewport size — rendering before the window
+      // has actually resized would size page 1 to the small pre-fullscreen
+      // window, leaving it not fitting the height until a re-render.
+      try {
+        await document.documentElement.requestFullscreen();
+        await waitForViewportResize();
+      } catch { /* continue without fullscreen */ }
+
+      // Render the starting page (now at the correct fullscreen dimensions).
       await renderPage(AppState.pdfJsDoc, AppState.currentPage, pdfCanvas);
       syncAnnotationCanvasSize();
       const ctx = annotationCanvas.getContext('2d');
       redrawCanvas(ctx);
 
-      // Request fullscreen (failure is non-fatal)
-      try {
-        await document.documentElement.requestFullscreen();
-      } catch { /* continue without fullscreen */ }
+      // Hide the mouse cursor. Browsers keep showing the previous cursor image
+      // until the next pointer movement, so a small timer after going fullscreen
+      // forces `cursor: none` to take effect immediately instead of after the
+      // first click/move.
+      hidePresenterCursor();
+      setTimeout(hidePresenterCursor, 50);
+    }
+
+    /**
+     * Resolve once the window has resized after entering fullscreen (the
+     * requestFullscreen() promise can resolve before innerWidth/innerHeight
+     * update). Falls back to a short timeout if no resize event fires.
+     */
+    function waitForViewportResize() {
+      return new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          window.removeEventListener('resize', finish);
+          // One more frame so layout metrics are fully settled before render.
+          requestAnimationFrame(() => resolve());
+        };
+        window.addEventListener('resize', finish, { once: true });
+        setTimeout(finish, 150); // fallback if resize never fires
+      });
+    }
+
+    /** Force the cursor hidden across the presenter view and its canvases. */
+    function hidePresenterCursor() {
+      if (AppState.cursorHideTimer) {
+        clearTimeout(AppState.cursorHideTimer);
+        AppState.cursorHideTimer = null;
+      }
+      presenterSection.style.cursor = 'none';
+      pdfCanvas.style.cursor        = 'none';
+      annotationCanvas.style.cursor = 'none';
     }
 
     /** Exit presenter view, record resume page, return to landing. */
@@ -1806,8 +1884,17 @@
       AppState.resumePage   = AppState.currentPage;
       document.getElementById('start-page-input').value = AppState.resumePage;
 
+      if (AppState.cursorHideTimer) {
+        clearTimeout(AppState.cursorHideTimer);
+        AppState.cursorHideTimer = null;
+      }
+
       presenterSection.classList.remove('active');
       landingSection.style.display = '';
+
+      // Reveal the error container again — any error raised during the
+      // presentation is now shown on the landing page until dismissed.
+      document.getElementById('error-container').classList.remove('presenting');
 
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(() => {});
@@ -1854,7 +1941,17 @@
     };
 
     document.addEventListener('keydown', (event) => {
-      if (!AppState.isPresenting) return;
+      // When NOT presenting: P enters the presenter view (unless typing in a field).
+      if (!AppState.isPresenting) {
+        const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(event.target.tagName);
+        if (!typing && (event.key === 'p' || event.key === 'P')) {
+          event.preventDefault();
+          enterPresenterView();
+        }
+        return;
+      }
+
+      // While presenting: run the matching shortcut action.
       const action = SHORTCUT_ACTIONS[event.key];
       if (action) {
         event.preventDefault();
@@ -1862,10 +1959,31 @@
       }
     });
 
+    // Pressing Enter in the start-page input jumps straight into the presenter.
+    document.getElementById('start-page-input').addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.target.blur();
+        enterPresenterView();
+      }
+    });
+
     // ── PresenterModule — pointer / cursor handling ───────────────
 
-    annotationCanvas.addEventListener('mousemove', (e) => {
+    /**
+     * Reveal the crosshair cursor and schedule it to hide again after 2s of
+     * no movement. Called on every mousemove inside the presenter.
+     */
+    function showCursorTemporarily() {
       annotationCanvas.style.cursor = 'crosshair';
+      pdfCanvas.style.cursor        = 'crosshair';
+      presenterSection.style.cursor = 'crosshair';
+      if (AppState.cursorHideTimer) clearTimeout(AppState.cursorHideTimer);
+      AppState.cursorHideTimer = setTimeout(hidePresenterCursor, 2000);
+    }
+
+    annotationCanvas.addEventListener('mousemove', (e) => {
+      showCursorTemporarily();
       if (AppState.activeStroke) {
         const scale = annotationCanvas.width / annotationCanvas.offsetWidth;
         continueStroke(e.offsetX * scale, e.offsetY * scale);
@@ -1873,7 +1991,6 @@
     });
 
     annotationCanvas.addEventListener('mousedown', (e) => {
-      annotationCanvas.style.cursor = 'none';
       const scale = annotationCanvas.width / annotationCanvas.offsetWidth;
       beginStroke(e.offsetX * scale, e.offsetY * scale);
     });
@@ -2030,6 +2147,14 @@
     document.getElementById('btn-present').addEventListener('click', enterPresenterView);
     document.getElementById('btn-save').addEventListener('click', saveWithAnnotations);
     document.getElementById('btn-download-screenshot').addEventListener('click', downloadScreenshot);
+
+    // Show the current viewport size immediately (other fields stay empty until a file loads)
+    function updateViewportSize() {
+      document.getElementById('meta-viewport').textContent =
+        `${window.innerWidth} × ${window.innerHeight}`;
+    }
+    updateViewportSize();
+    window.addEventListener('resize', updateViewportSize);
 
     // Initialise pdfcpu WASM at startup (non-blocking)
     initPdfcpu();
