@@ -1,0 +1,87 @@
+name: dist
+
+# Assembles the deployable site into dist/ and uploads it as an artifact.
+# Download the artifact from the run's summary page: GitHub serves it as a
+# .zip with index.html at the top level, which is exactly what Amplify's
+# "Deploy without Git provider" upload expects — no unpacking or
+# re-zipping needed.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dist:
+    name: Assemble Amplify bundle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Read APP_VERSION from sw.js
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(sed -n "s/^const APP_VERSION = '\(.*\)';\$/\1/p" sw.js)"
+          if [ -z "$version" ]; then
+            echo "::error file=sw.js::APP_VERSION not found. It is the single source of truth for the release version and must be declared as: const APP_VERSION = 'x.y.z';"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "PDFhero v$version" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Assemble dist/
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp index.html manifest.json sw.js pdfcpu.wasm dist/
+          cp deploy/customHttp.yml dist/
+          # Optional: manifest.json currently declares no icons, so icons/
+          # is picked up automatically if and when it is added.
+          if [ -d icons ]; then cp -r icons dist/; fi
+
+      - name: Verify bundle
+        run: |
+          set -euo pipefail
+          for f in index.html manifest.json sw.js pdfcpu.wasm customHttp.yml; do
+            if [ ! -s "dist/$f" ]; then
+              echo "::error::dist/$f is missing or empty"
+              exit 1
+            fi
+          done
+          # Guard the single-source-of-truth rule: a "version" key in the
+          # manifest is a second place to forget to bump (and browsers
+          # ignore it — it is not part of the web app manifest spec).
+          if grep -q '"version"' dist/manifest.json; then
+            echo "::error file=manifest.json::Remove the \"version\" key. APP_VERSION in sw.js is the only version."
+            exit 1
+          fi
+          jq empty dist/manifest.json
+          ls -lh dist
+          {
+            echo
+            echo '### Bundle contents'
+            echo
+            echo '```'
+            ls -lh dist
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Amplify deployment bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: pdfhero-dist-v${{ steps.version.outputs.version }}
+          # Naming the directory (not dist/*) makes dist/ the artifact root,
+          # so the downloaded zip has index.html at its top level.
+          path: dist
+          if-no-files-found: error
+          compression-level: 9
+          retention-days: 90

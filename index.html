@@ -198,13 +198,39 @@
 
     #btn-about:hover { border-color: #e94560; color: #e0e0e0; }
 
-    #btn-save, #btn-download-screenshot {
+    #btn-save, #btn-download-screenshots {
       background: #0f3460;
       color: #e0e0e0;
     }
 
     #btn-save:hover { background: #1a4a7a; }
-    #btn-download-screenshot:not(:disabled):hover { background: #1a4a7a; }
+    #btn-download-screenshots:not(:disabled):hover { background: #1a4a7a; }
+
+    /* Transient capture confirmation, shown over the slide in presenter view.
+       Without it there is no way to tell that S did anything, or how many
+       screenshots have stacked up, while in fullscreen. */
+    #capture-toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(15, 52, 96, 0.92);
+      color: #e0e0e0;
+      border: 1px solid #4a9ede;
+      border-radius: 6px;
+      padding: 8px 16px;
+      font-size: 0.9rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.25s ease;
+      z-index: 10;
+    }
+
+    #capture-toast.visible { opacity: 1; }
+
+    @media (prefers-reduced-motion: reduce) {
+      #capture-toast { transition: none; }
+    }
 
     /* Error alert */
     #error-container {
@@ -357,7 +383,7 @@
     </div>
 
     <button id="btn-save">Save with annotations</button>
-    <button id="btn-download-screenshot" disabled>Download screenshot</button>
+    <button id="btn-download-screenshots" disabled>Download screenshots</button>
 
     <!-- Shortcut legend — moved after the metadata / present block -->
     <div id="shortcut-legend">
@@ -369,7 +395,7 @@
       <div class="shortcut-row"><span class="shortcut-key">E</span><span>Erase all annotations</span></div>
       <div class="shortcut-row"><span class="shortcut-key">U</span><span>Undo last stroke</span></div>
       <div class="shortcut-row"><span class="shortcut-key">Z</span><span>Redo last undone stroke</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">S</span><span>Capture screenshot</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">S</span><span>Capture screenshot (adds to the download stack)</span></div>
     </div>
 
   </section>
@@ -382,6 +408,7 @@
               style="position:absolute; top:0; left:0; cursor:none"
               aria-hidden="true"></canvas>
     </div>
+    <div id="capture-toast" role="status" aria-live="polite"></div>
   </section>
 
   <!-- ── About dialog ───────────────────────────────────────────── -->
@@ -398,6 +425,448 @@
   <!-- PDF.js (ES module — imported inside the module script below) -->
   <!-- pdf-lib (UMD build — exposes window.PDFLib) -->
   <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+
+  <!-- ── In-memory filesystem for the Go WASM runtime ───────────── -->
+  <!-- MUST run BEFORE wasm_exec.js.  wasm_exec.js installs a stub
+       globalThis.fs whose only working call is writeSync(): every file
+       operation fails with ENOSYS and process.cwd() throws.  pdfcpu is
+       the ordinary command-line tool compiled to WASM — it opens its
+       input by path — so with that stub it can never read a PDF and
+       falls back to printing its usage text.
+       Defining globalThis.fs / globalThis.process here makes
+       wasm_exec.js skip its stubs (it guards both with `if (!…)`). -->
+  <script>
+  (() => {
+    'use strict';
+
+    const decoder = new TextDecoder('utf-8');
+
+    const S_IFREG = 0o100000;
+    const S_IFDIR = 0o040000;
+    const S_IFCHR = 0o020000;
+
+    /**
+     * Build an error the Go runtime can translate.
+     * Only codes present in Go's syscall.errnoByCode are safe — an
+     * unrecognised code makes the Go runtime panic instead of returning
+     * an error to the caller.
+     * @param {string} code
+     * @returns {Error}
+     */
+    const fail = (code) => {
+      const e = new Error(code);
+      e.code = code;
+      return e;
+    };
+
+    /**
+     * Go blocks a goroutine on a channel until the fs callback fires, so
+     * callbacks must not run synchronously: re-entering the WASM instance
+     * from inside a WASM call corrupts the Go scheduler. A microtask runs
+     * after the current task (and therefore after Go has yielded), which
+     * is what Node's genuinely-async fs callbacks give Go.
+     * Go always passes a buffered channel, so one hop is enough.
+     */
+    const later = (callback, ...args) => { queueMicrotask(() => callback(...args)); };
+
+    /** @typedef {{mode:number, ino:number, data:Uint8Array|null, mtimeMs:number}} Node */
+
+    /** @type {Map<string, Node>} */
+    let nodes = new Map();
+    /** @type {Map<number, {path:string, pos:number, append:boolean, dirIdx:number}>} */
+    let handles = new Map();
+    let nextFd = 3;
+    let nextIno = 1;
+    let cwd = '/';
+
+    /** Captured stdout/stderr byte chunks (decoded only when read, so
+     *  multi-byte UTF-8 sequences split across writes survive). */
+    let outChunks = [];
+    let errChunks = [];
+
+    /**
+     * Resolve to a clean absolute path (relative paths resolve against cwd).
+     * @param {string} path
+     * @returns {string}
+     */
+    function normalize(path) {
+      let p = String(path);
+      if (!p.startsWith('/')) p = cwd + '/' + p;
+      const out = [];
+      for (const part of p.split('/')) {
+        if (part === '' || part === '.') continue;
+        if (part === '..') { out.pop(); continue; }
+        out.push(part);
+      }
+      return '/' + out.join('/');
+    }
+
+    /**
+     * @param {string} path  Already-normalised absolute path
+     * @returns {string}
+     */
+    function dirname(path) {
+      const i = path.lastIndexOf('/');
+      return i <= 0 ? '/' : path.substring(0, i);
+    }
+
+    /**
+     * Create `path` and every missing parent as directories.
+     * @param {string} path
+     */
+    function mkdirp(path) {
+      if (!nodes.has('/')) {
+        nodes.set('/', { mode: S_IFDIR | 0o755, ino: nextIno++, data: null, mtimeMs: Date.now() });
+      }
+      let cur = '';
+      for (const part of normalize(path).split('/').filter(Boolean)) {
+        cur += '/' + part;
+        if (!nodes.has(cur)) {
+          nodes.set(cur, { mode: S_IFDIR | 0o755, ino: nextIno++, data: null, mtimeMs: Date.now() });
+        }
+      }
+    }
+
+    /** @param {Node} node @returns {boolean} */
+    const isDir = (node) => (node.mode & S_IFDIR) !== 0;
+
+    /**
+     * Stat object shaped the way Go's syscall.setStat reads it.
+     * Every field must be a number — Go calls .Int() on each and panics
+     * on undefined.
+     * @param {Node} node
+     * @returns {Record<string, number|Function>}
+     */
+    function statOf(node) {
+      const size = node.data ? node.data.length : 0;
+      return {
+        dev: 1, ino: node.ino, mode: node.mode, nlink: 1,
+        uid: 0, gid: 0, rdev: 0,
+        size, blksize: 4096, blocks: Math.ceil(size / 4096),
+        atimeMs: node.mtimeMs, mtimeMs: node.mtimeMs, ctimeMs: node.mtimeMs,
+        isDirectory: () => isDir(node),
+        isFile: () => !isDir(node),
+      };
+    }
+
+    /** Stat for the std streams (fds 0/1/2), which have no fs node. */
+    const charDevStat = () => ({
+      dev: 1, ino: 0, mode: S_IFCHR | 0o666, nlink: 1,
+      uid: 0, gid: 0, rdev: 0,
+      size: 0, blksize: 4096, blocks: 0,
+      atimeMs: 0, mtimeMs: 0, ctimeMs: 0,
+      isDirectory: () => false,
+      isFile: () => false,
+    });
+
+    /**
+     * Append a write to the captured stdout/stderr buffers.
+     * @param {number} fd  1 (stdout) or 2 (stderr)
+     * @param {Uint8Array} buf
+     * @param {number} offset
+     * @param {number} length
+     */
+    function writeStd(fd, buf, offset, length) {
+      // Copy: `buf` is a view over Go's linear memory and may be reused.
+      const chunk = new Uint8Array(buf.subarray(offset, offset + length));
+      (fd === 2 ? errChunks : outChunks).push(chunk);
+    }
+
+    /** @param {Uint8Array[]} chunks @returns {string} */
+    function decodeChunks(chunks) {
+      let total = 0;
+      for (const c of chunks) total += c.length;
+      const all = new Uint8Array(total);
+      let at = 0;
+      for (const c of chunks) { all.set(c, at); at += c.length; }
+      return decoder.decode(all);
+    }
+
+    const O = {
+      O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024,
+    };
+
+    globalThis.fs = {
+      constants: O,
+
+      writeSync(fd, buf) {
+        if (fd === 1 || fd === 2) {
+          writeStd(fd, buf, 0, buf.length);
+          return buf.length;
+        }
+        const h = handles.get(fd);
+        if (!h) throw fail('EBADF');
+        writeAt(h, buf, 0, buf.length, null);
+        return buf.length;
+      },
+
+      write(fd, buf, offset, length, position, callback) {
+        if (fd === 1 || fd === 2) {
+          writeStd(fd, buf, offset, length);
+          return later(callback, null, length);
+        }
+        const h = handles.get(fd);
+        if (!h) return later(callback, fail('EBADF'));
+        try {
+          writeAt(h, buf, offset, length, position);
+        } catch (e) {
+          return later(callback, e.code ? e : fail('EINVAL'));
+        }
+        later(callback, null, length);
+      },
+
+      read(fd, buffer, offset, length, position, callback) {
+        if (fd === 0) return later(callback, null, 0); // stdin: always EOF
+        const h = handles.get(fd);
+        if (!h) return later(callback, fail('EBADF'));
+        const node = nodes.get(h.path);
+        if (!node) return later(callback, fail('ENOENT'));
+        if (isDir(node)) return later(callback, fail('EISDIR'));
+        const tracked = position === null || position === undefined;
+        const pos = tracked ? h.pos : position;
+        const data = node.data ?? new Uint8Array(0);
+        const n = Math.max(0, Math.min(length, data.length - pos));
+        if (n > 0) buffer.set(data.subarray(pos, pos + n), offset);
+        if (tracked) h.pos = pos + n;
+        later(callback, null, n);
+      },
+
+      open(path, flags, mode, callback) {
+        let p;
+        try { p = normalize(path); } catch { return later(callback, fail('EINVAL')); }
+        const wantWrite = (flags & O.O_WRONLY) !== 0 || (flags & O.O_RDWR) !== 0;
+        const creating  = (flags & O.O_CREAT) !== 0;
+        let node = nodes.get(p);
+        if (!node) {
+          if (!creating) return later(callback, fail('ENOENT'));
+          mkdirp(dirname(p));
+          node = { mode: S_IFREG | 0o644, ino: nextIno++, data: new Uint8Array(0), mtimeMs: Date.now() };
+          nodes.set(p, node);
+        } else if (creating && (flags & O.O_EXCL) !== 0) {
+          return later(callback, fail('EEXIST'));
+        } else if (wantWrite && (flags & O.O_TRUNC) !== 0) {
+          if (isDir(node)) return later(callback, fail('EISDIR'));
+          node.data = new Uint8Array(0);
+        }
+        const append = (flags & O.O_APPEND) !== 0;
+        const fd = nextFd++;
+        handles.set(fd, {
+          path: p,
+          pos: append ? (node.data?.length ?? 0) : 0,
+          append,
+          dirIdx: 0,
+        });
+        later(callback, null, fd);
+      },
+
+      close(fd, callback) {
+        handles.delete(fd);
+        later(callback, null);
+      },
+
+      fstat(fd, callback) {
+        if (fd === 0 || fd === 1 || fd === 2) return later(callback, null, charDevStat());
+        const h = handles.get(fd);
+        if (!h) return later(callback, fail('EBADF'));
+        const node = nodes.get(h.path);
+        if (!node) return later(callback, fail('ENOENT'));
+        later(callback, null, statOf(node));
+      },
+
+      stat(path, callback) {
+        const node = nodes.get(normalize(path));
+        if (!node) return later(callback, fail('ENOENT'));
+        later(callback, null, statOf(node));
+      },
+
+      lstat(path, callback) { globalThis.fs.stat(path, callback); },
+
+      readdir(path, callback) {
+        const p = normalize(path);
+        const node = nodes.get(p);
+        if (!node) return later(callback, fail('ENOENT'));
+        if (!isDir(node)) return later(callback, fail('ENOTDIR'));
+        const prefix = p === '/' ? '/' : p + '/';
+        const names = [];
+        for (const key of nodes.keys()) {
+          if (key === p || !key.startsWith(prefix)) continue;
+          const rest = key.substring(prefix.length);
+          if (rest.length > 0 && !rest.includes('/')) names.push(rest);
+        }
+        later(callback, null, names);
+      },
+
+      mkdir(path, perm, callback) {
+        const p = normalize(path);
+        if (nodes.has(p)) return later(callback, fail('EEXIST'));
+        mkdirp(p);
+        later(callback, null);
+      },
+
+      rmdir(path, callback) {
+        const p = normalize(path);
+        const node = nodes.get(p);
+        if (!node) return later(callback, fail('ENOENT'));
+        if (!isDir(node)) return later(callback, fail('ENOTDIR'));
+        const prefix = p + '/';
+        for (const key of nodes.keys()) {
+          if (key.startsWith(prefix)) return later(callback, fail('ENOTEMPTY'));
+        }
+        nodes.delete(p);
+        later(callback, null);
+      },
+
+      unlink(path, callback) {
+        const p = normalize(path);
+        const node = nodes.get(p);
+        if (!node) return later(callback, fail('ENOENT'));
+        if (isDir(node)) return later(callback, fail('EISDIR'));
+        nodes.delete(p);
+        later(callback, null);
+      },
+
+      rename(from, to, callback) {
+        const a = normalize(from);
+        const node = nodes.get(a);
+        if (!node) return later(callback, fail('ENOENT'));
+        const b = normalize(to);
+        mkdirp(dirname(b));
+        nodes.delete(a);
+        nodes.set(b, node);
+        later(callback, null);
+      },
+
+      truncate(path, length, callback) {
+        const node = nodes.get(normalize(path));
+        if (!node) return later(callback, fail('ENOENT'));
+        resize(node, length);
+        later(callback, null);
+      },
+
+      ftruncate(fd, length, callback) {
+        const h = handles.get(fd);
+        if (!h) return later(callback, fail('EBADF'));
+        const node = nodes.get(h.path);
+        if (!node) return later(callback, fail('ENOENT'));
+        resize(node, length);
+        later(callback, null);
+      },
+
+      utimes(path, atime, mtime, callback) {
+        const node = nodes.get(normalize(path));
+        if (!node) return later(callback, fail('ENOENT'));
+        node.mtimeMs = mtime * 1000;
+        later(callback, null);
+      },
+
+      // Ownership/permission bits are meaningless here: accept and ignore
+      // so Go's os.Chmod/os.Chown never abort an operation.
+      chmod(path, mode, callback) { later(callback, null); },
+      fchmod(fd, mode, callback) { later(callback, null); },
+      chown(path, uid, gid, callback) { later(callback, null); },
+      fchown(fd, uid, gid, callback) { later(callback, null); },
+      lchown(path, uid, gid, callback) { later(callback, null); },
+      fsync(fd, callback) { later(callback, null); },
+
+      // No link support — Go maps ENOSYS to a plain "not supported" error.
+      link(path, link, callback) { later(callback, fail('ENOSYS')); },
+      symlink(path, link, callback) { later(callback, fail('ENOSYS')); },
+      readlink(path, callback) { later(callback, fail('EINVAL')); },
+    };
+
+    /**
+     * Write into an open handle, growing the file as needed.
+     * @param {{path:string, pos:number, append:boolean}} h
+     * @param {Uint8Array} buf
+     * @param {number} offset
+     * @param {number} length
+     * @param {number|null} position
+     */
+    function writeAt(h, buf, offset, length, position) {
+      const node = nodes.get(h.path);
+      if (!node) throw fail('ENOENT');
+      if (isDir(node)) throw fail('EISDIR');
+      const tracked = position === null || position === undefined;
+      const at = h.append ? (node.data?.length ?? 0) : (tracked ? h.pos : position);
+      const end = at + length;
+      if (!node.data || node.data.length < end) {
+        const grown = new Uint8Array(end);
+        if (node.data) grown.set(node.data, 0);
+        node.data = grown;
+      }
+      node.data.set(buf.subarray(offset, offset + length), at);
+      node.mtimeMs = Date.now();
+      if (tracked || h.append) h.pos = end;
+    }
+
+    /**
+     * @param {Node} node
+     * @param {number} length
+     */
+    function resize(node, length) {
+      const next = new Uint8Array(length);
+      if (node.data) next.set(node.data.subarray(0, Math.min(length, node.data.length)), 0);
+      node.data = next;
+      node.mtimeMs = Date.now();
+    }
+
+    globalThis.process = {
+      getuid() { return -1; },
+      getgid() { return -1; },
+      geteuid() { return -1; },
+      getegid() { return -1; },
+      getgroups() { throw fail('ENOSYS'); },
+      pid: -1,
+      ppid: -1,
+      umask() { throw fail('ENOSYS'); },
+      cwd() { return cwd; },
+      chdir(dir) { cwd = normalize(dir); },
+    };
+
+    /**
+     * Control surface used by the pdfcpu runner below.
+     * @type {{
+     *   reset: () => void,
+     *   writeFile: (path: string, bytes: Uint8Array) => void,
+     *   readFile: (path: string) => Uint8Array|null,
+     *   stdout: () => string,
+     *   stderr: () => string,
+     * }}
+     */
+    globalThis.MemFS = {
+      /** Discard all files, handles and captured output. */
+      reset() {
+        nodes = new Map();
+        handles = new Map();
+        nextFd = 3;
+        nextIno = 1;
+        cwd = '/';
+        outChunks = [];
+        errChunks = [];
+        mkdirp('/tmp');
+      },
+      writeFile(path, bytes) {
+        const p = normalize(path);
+        mkdirp(dirname(p));
+        nodes.set(p, {
+          mode: S_IFREG | 0o644,
+          ino: nextIno++,
+          data: new Uint8Array(bytes),
+          mtimeMs: Date.now(),
+        });
+      },
+      readFile(path) {
+        const node = nodes.get(normalize(path));
+        if (!node || isDir(node)) return null;
+        return node.data ?? new Uint8Array(0);
+      },
+      stdout() { return decodeChunks(outChunks); },
+      stderr() { return decodeChunks(errChunks); },
+    };
+
+    globalThis.MemFS.reset();
+  })();
+  </script>
 
   <!-- ── Go WASM runtime (wasm_exec.js — inlined verbatim) ─────── -->
   <!-- Source: https://raw.githubusercontent.com/golang/go/go1.21.0/misc/wasm/wasm_exec.js -->
@@ -980,6 +1449,38 @@
       navigator.serviceWorker.register('./sw.js');
     }
 
+    // ── App version ──────────────────────────────────────────────
+
+    /**
+     * The version lives in exactly one place: APP_VERSION in sw.js, which
+     * also derives its cache name from it. Read it back from there so the
+     * About dialog, the cache name and the exported PDF's /Creator string
+     * can never drift apart.
+     *
+     * Resolves to null if sw.js cannot be read (e.g. the page was opened
+     * over file://) — callers then simply omit the version.
+     * @type {Promise<string|null>}
+     */
+    const appVersionPromise = (async () => {
+      try {
+        // no-store, plus the sw.js bypass in the service worker's fetch
+        // handler, keeps this from being answered by a stale cached copy.
+        const res = await fetch('./sw.js', { cache: 'no-store' });
+        if (!res.ok) return null;
+        const match = /APP_VERSION\s*=\s*['"]([^'"]+)['"]/.exec(await res.text());
+        return match ? match[1] : null;
+      } catch {
+        return null;
+      }
+    })();
+
+    /**
+     * Resolved value of appVersionPromise, or null until it settles.
+     * @type {string|null}
+     */
+    let appVersion = null;
+    appVersionPromise.then((version) => { appVersion = version; });
+
     // ── AppState ─────────────────────────────────────────────────
     const AppState = {
       // PDF data
@@ -1004,9 +1505,12 @@
       redoStack: new Map(),    // Map<pageNum, Stroke[]>
       activeStroke: null,      // Stroke | null (in-progress)
 
-      // Screenshot
-      screenshotBuffer: null,  // Blob | null — in-memory PNG, replaced on each S keypress
-      screenshotPage: null,    // number | null — page number captured in the buffer
+      // Screenshots — one entry appended per S keypress, in capture order.
+      // Kept until a new PDF is loaded; downloading does not clear them.
+      // blob is a promise: the entry is appended the instant S is pressed so
+      // the stack order is fixed, while PNG encoding finishes in background.
+      /** @type {{page: number, blob: Promise<Blob>}[]} */
+      screenshots: [],
 
       // UI
       cursorHideTimer: null,   // setTimeout handle
@@ -1057,21 +1561,39 @@
     // ── MetadataModule — pdfcpu WASM init ────────────────────────
 
     /**
-     * Flag indicating whether pdfcpu WASM initialised successfully.
-     * Set to true only after go.run() completes without error.
-     * Checked by extractMetadata() before attempting WASM calls.
+     * Flag indicating whether the pdfcpu WASM module compiled successfully.
+     * Checked by extractMetadata() before attempting to run pdfcpu.
      * @type {boolean}
      */
     let pdfcpuReady = false;
 
     /**
-     * Fetches and initialises the pdfcpu WASM binary once at page load.
-     * Uses the Go runtime exposed by the inlined wasm_exec.js (<class Go>).
+     * Compiled pdfcpu module, instantiated afresh for every command.
+     * pdfcpu.wasm is the pdfcpu *command-line tool* compiled to Go/WASM:
+     * its main() parses argv, does the work and exits. A Go WASM instance
+     * cannot be restarted after its program exits, so each invocation
+     * needs its own instance built from this one compiled module.
+     * @type {WebAssembly.Module|null}
+     */
+    let pdfcpuModule = null;
+
+    /**
+     * Serialises pdfcpu invocations: the in-memory filesystem and the
+     * captured stdout/stderr are process-global, so two concurrent runs
+     * would read each other's files and output.
+     * @type {Promise<any>}
+     */
+    let pdfcpuQueue = Promise.resolve();
+
+    /**
+     * Fetches and compiles the pdfcpu WASM binary once at page load.
+     * Nothing is executed here — see runPdfcpu() for invocation.
      *
      * On success  : pdfcpuReady is set to true.
      * On failure  : shows a non-blocking "Metadata unavailable" error banner
      *               and leaves pdfcpuReady = false so the rest of the app
-     *               continues to function (file selection remains enabled).
+     *               continues to function (file selection remains enabled,
+     *               metadata comes from direct parsing).
      *
      * Local file: ./pdfcpu.wasm (v0.15.0 — served alongside PDFhero.html)
      *
@@ -1082,16 +1604,15 @@
       const PDFCPU_WASM_URL = './pdfcpu.wasm';
 
       try {
-        const go = new Go(); // Go class provided by inlined wasm_exec.js
-        const result = await WebAssembly.instantiateStreaming(
-          fetch(PDFCPU_WASM_URL),
-          go.importObject
-        );
-        // go.run() launches the Go runtime inside the WASM instance.
-        // It returns a Promise that resolves when the Go program exits;
-        // for a long-running WASM module the promise may stay pending
-        // which is expected — we don't await it here.
-        go.run(result.instance);
+        try {
+          pdfcpuModule = await WebAssembly.compileStreaming(fetch(PDFCPU_WASM_URL));
+        } catch {
+          // compileStreaming needs an application/wasm Content-Type; some
+          // static servers get it wrong, so retry via ArrayBuffer.
+          const res = await fetch(PDFCPU_WASM_URL);
+          if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${PDFCPU_WASM_URL}`);
+          pdfcpuModule = await WebAssembly.compile(await res.arrayBuffer());
+        }
         pdfcpuReady = true;
       } catch (err) {
         console.error('pdfcpu WASM init failed:', err);
@@ -1099,6 +1620,162 @@
         showError('Metadata unavailable — pdfcpu WASM could not be loaded.');
         // pdfcpuReady remains false
       }
+    }
+
+    /**
+     * Run the pdfcpu CLI once inside a fresh WASM instance.
+     *
+     * Input files are placed in the in-memory filesystem (globalThis.MemFS)
+     * before the program starts, so pdfcpu can open them by path exactly as
+     * it would on a real disk. stdout/stderr are captured rather than logged.
+     *
+     * @param {string[]} argv          Arguments after the program name,
+     *                                 e.g. ['info', '--json', '/in.pdf']
+     * @param {Record<string, Uint8Array>} [inputFiles]
+     *                                 Virtual path → file contents
+     * @returns {Promise<{exitCode:number, stdout:string, stderr:string,
+     *                    readFile:(path:string)=>Uint8Array|null}>}
+     */
+    function runPdfcpu(argv, inputFiles = {}) {
+      const run = async () => {
+        if (!pdfcpuModule) throw new Error('pdfcpu WASM not initialised');
+
+        globalThis.MemFS.reset();
+        for (const [path, bytes] of Object.entries(inputFiles)) {
+          globalThis.MemFS.writeFile(path, bytes);
+        }
+
+        const go = new Go(); // Go class provided by inlined wasm_exec.js
+        go.argv = ['pdfcpu', ...argv];
+        go.env = { HOME: '/', PWD: '/', TMPDIR: '/tmp' };
+
+        // wasm_exec.js's default exit handler only console.warns; capture the
+        // code instead so callers can tell success from failure.
+        let exitCode = 0;
+        go.exit = (code) => { exitCode = code; };
+
+        const instance = await WebAssembly.instantiate(pdfcpuModule, go.importObject);
+        // Resolves when the Go program exits — which the CLI always does.
+        await go.run(instance);
+
+        return {
+          exitCode,
+          stdout: globalThis.MemFS.stdout(),
+          stderr: globalThis.MemFS.stderr(),
+          readFile: (path) => globalThis.MemFS.readFile(path),
+        };
+      };
+
+      // Chain onto the queue, and keep the queue alive across failures.
+      const result = pdfcpuQueue.then(run, run);
+      pdfcpuQueue = result.catch(() => {});
+      return result;
+    }
+
+    /**
+     * Ask pdfcpu for the metadata of a PDF via `pdfcpu info --json`.
+     *
+     * --conf disable  : pdfcpu otherwise wants a writable config directory
+     *                   ($XDG_CONFIG_HOME/pdfcpu), which does not exist here.
+     * --offline       : suppresses pdfcpu's outbound HTTP traffic.
+     *
+     * @param {Uint8Array} pdfBytes
+     * @returns {Promise<Record<string, any>|null>}  pdfcpu's info object for
+     *          the file, or null if pdfcpu could not report on it.
+     */
+    async function pdfcpuInfo(pdfBytes) {
+      const IN_PATH = '/in.pdf';
+      const { exitCode, stdout, stderr } = await runPdfcpu(
+        ['info', '--json', '--conf', 'disable', '--offline', IN_PATH],
+        { [IN_PATH]: pdfBytes }
+      );
+
+      if (stderr.trim()) console.debug('pdfcpu stderr:', stderr.trim());
+
+      // Isolate the JSON document: pdfcpu may emit warnings around it.
+      const start = stdout.indexOf('{');
+      const end = stdout.lastIndexOf('}');
+      if (start === -1 || end <= start) {
+        console.warn(`pdfcpu info produced no JSON (exit ${exitCode}):`, stdout.trim() || stderr.trim());
+        return null;
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(stdout.substring(start, end + 1));
+      } catch (err) {
+        console.warn('pdfcpu info JSON parse failed:', err);
+        return null;
+      }
+
+      // Shape: { header: {...}, infos: [ {...} ] }
+      const info = Array.isArray(parsed?.infos) ? parsed.infos[0] : null;
+      return info ?? null;
+    }
+
+    /**
+     * PDF/X level keys as they appear in a PDF's Info dictionary, which
+     * pdfcpu surfaces verbatim under `properties`.
+     * @type {string[]}
+     */
+    const PDFX_PROPERTY_KEYS = ['GTS_PDFXVersion', 'GTS_PDFXConformance'];
+
+    /**
+     * Translate a pdfcpu `info --json` entry into PDFhero's Meta field names.
+     *
+     * pdfcpu reports page dimensions as `pageSizes`: one entry per distinct
+     * size in the document, in points (pdfcpu's default unit). The first
+     * entry is the presentation size PDFhero cares about. Entries are
+     * objects ({width, height}); older builds emit "W x H" strings, so both
+     * forms are accepted.
+     *
+     * Fields pdfcpu does not report (rendering intent, ICC profile names)
+     * are returned as null/absent so extractMetadata() fills them from
+     * parsePdfFallback().
+     *
+     * @param {Record<string, any>} info
+     * @returns {Record<string, any>}
+     */
+    function pdfcpuInfoToMeta(info) {
+      let width = null;
+      let height = null;
+
+      const sizes = info.pageSizes;
+      const first = Array.isArray(sizes) ? sizes[0] : null;
+      if (first && typeof first === 'object') {
+        width = typeof first.width === 'number' ? first.width : null;
+        height = typeof first.height === 'number' ? first.height : null;
+      } else if (typeof first === 'string') {
+        // e.g. "595.28 x 841.89" (a unit suffix may follow)
+        const m = /(-?[\d.]+)\s*[x×]\s*(-?[\d.]+)/i.exec(first);
+        if (m) {
+          width = parseFloat(m[1]);
+          height = parseFloat(m[2]);
+        }
+      }
+
+      // Round off pdfcpu's float noise; page sizes are points.
+      const round2 = (v) => (typeof v === 'number' && isFinite(v) ? Math.round(v * 100) / 100 : null);
+
+      let pdfXLevel = null;
+      const props = info.properties;
+      if (props && typeof props === 'object') {
+        for (const key of PDFX_PROPERTY_KEYS) {
+          const v = props[key];
+          if (typeof v === 'string' && v.trim() !== '') { pdfXLevel = v.trim(); break; }
+        }
+      }
+
+      const str = (v) => (typeof v === 'string' && v.trim() !== '' ? v.trim() : null);
+
+      return {
+        width: round2(width),
+        height: round2(height),
+        pageCount: typeof info.pageCount === 'number' ? info.pageCount : null,
+        // Fall back to the producer when the creating application is blank.
+        creator: str(info.creator) ?? str(info.producer),
+        pdfXLevel,
+      };
     }
 
     // ── MetadataModule — extractMetadata ─────────────────────────
@@ -1305,11 +1982,12 @@
      *
      * Strategy:
      *  1. If pdfcpuReady is false, skip WASM and go straight to fallback.
-     *  2. If pdfcpuReady is true, attempt to call globalThis.pdfcpuInfo or
-     *     globalThis.pdfcpu?.info with the pdfBytes Uint8Array.
-     *  3. If the WASM call succeeds and returns parseable JSON, use those values.
+     *  2. If pdfcpuReady is true, run `pdfcpu info --json` over the bytes.
+     *  3. If that succeeds, use its values (page size, page count, creator,
+     *     PDF/X level from the document properties).
      *  4. For any field that is still missing (or on any WASM error), fill gaps
-     *     using parsePdfFallback().
+     *     using parsePdfFallback(). Rendering intent and ICC profile names
+     *     always come from there — `pdfcpu info` does not report them.
      *
      * All errors are caught — the function never throws.
      * Fields that cannot be extracted are returned as null.
@@ -1336,27 +2014,13 @@
       // 'pdfcpu' | 'fallback' | 'pdfcpu+fallback'
       let metaSource = 'fallback';
 
-      // ── Step 1 & 2: Attempt pdfcpu WASM call ─────────────────────
+      // ── Step 1 & 2: Run pdfcpu ───────────────────────────────────
       if (pdfcpuReady) {
         try {
-          // Try globalThis.pdfcpuInfo first, then globalThis.pdfcpu?.info
-          let rawResult = null;
-          if (typeof globalThis.pdfcpuInfo === 'function') {
-            rawResult = await Promise.resolve(globalThis.pdfcpuInfo(pdfBytes));
-          } else if (globalThis.pdfcpu && typeof globalThis.pdfcpu.info === 'function') {
-            rawResult = await Promise.resolve(globalThis.pdfcpu.info(pdfBytes));
-          }
-
-          // ── Step 3: Parse WASM result ─────────────────────────────
-          if (rawResult != null) {
-            if (typeof rawResult === 'string') {
-              try { wasmMeta = JSON.parse(rawResult); } catch { /* not JSON */ }
-            } else if (typeof rawResult === 'object') {
-              wasmMeta = rawResult;
-            }
-          }
-
-          if (wasmMeta != null) {
+          // ── Step 3: Normalise pdfcpu's info object ────────────────
+          const info = await pdfcpuInfo(pdfBytes);
+          if (info != null) {
+            wasmMeta = pdfcpuInfoToMeta(info);
             metaSource = 'pdfcpu';
           }
         } catch (err) {
@@ -1375,65 +2039,34 @@
         return null;
       };
 
-      // Normalise WASM result field names (pdfcpu may use camelCase or snake_case)
+      // pdfcpu values win; direct parsing fills whatever pdfcpu left out.
+      // (pdfcpuInfoToMeta already normalised the field names.)
       const w = wasmMeta;
       const meta = {
-        width: pick(
-          w?.width ?? w?.Width ?? w?.page_width ?? null,
-          fallback.width
-        ),
-        height: pick(
-          w?.height ?? w?.Height ?? w?.page_height ?? null,
-          fallback.height
-        ),
-        pageCount: pick(
-          w?.pageCount ?? w?.PageCount ?? w?.page_count ?? w?.pages ?? null,
-          fallback.pageCount
-        ),
-        creator: pick(
-          w?.creator ?? w?.Creator ?? null,
-          fallback.creator
-        ),
-        pdfXLevel: pick(
-          w?.pdfXLevel ?? w?.PDFXLevel ?? w?.pdf_x_level ?? w?.pdfx ?? null,
-          fallback.pdfXLevel
-        ),
-        renderingIntent: pick(
-          w?.renderingIntent ?? w?.RenderingIntent ?? w?.rendering_intent ?? null,
-          fallback.renderingIntent
-        ),
-        iccProfiles: (() => {
-          // Prefer WASM result if it's a non-empty array
-          const wasmProfiles = w?.iccProfiles ?? w?.ICCProfiles ?? w?.icc_profiles ?? null;
-          if (Array.isArray(wasmProfiles) && wasmProfiles.length > 0) return wasmProfiles;
-          return fallback.iccProfiles; // always an array (may be empty)
-        })(),
+        width:           pick(w?.width,           fallback.width),
+        height:          pick(w?.height,          fallback.height),
+        pageCount:       pick(w?.pageCount,       fallback.pageCount),
+        creator:         pick(w?.creator,         fallback.creator),
+        pdfXLevel:       pick(w?.pdfXLevel,       fallback.pdfXLevel),
+        // `pdfcpu info` reports neither of these — always direct parsing.
+        renderingIntent: fallback.renderingIntent,
+        iccProfiles:     fallback.iccProfiles, // always an array (may be empty)
       };
 
-      // Ensure numeric fields are actually numbers (WASM may return strings)
-      if (typeof meta.width === 'string') {
-        const n = parseFloat(meta.width);
-        meta.width = isNaN(n) ? null : n;
-      }
-      if (typeof meta.height === 'string') {
-        const n = parseFloat(meta.height);
-        meta.height = isNaN(n) ? null : n;
-      }
-      if (typeof meta.pageCount === 'string') {
-        const n = parseInt(meta.pageCount, 10);
-        meta.pageCount = isNaN(n) ? null : n;
-      }
-
       // Determine final source label:
-      // If pdfcpu ran but some fields still came from fallback, report both.
+      // If pdfcpu ran but direct parsing still supplied a displayed value,
+      // report both. Rendering intent and ICC profile names are never
+      // reported by `pdfcpu info`, so they only count against pdfcpu when
+      // direct parsing actually found something for them.
       if (metaSource === 'pdfcpu') {
-        const w = wasmMeta;
-        const wasmHadAllFields =
-          (w?.width ?? w?.Width ?? w?.page_width) != null &&
-          (w?.height ?? w?.Height ?? w?.page_height) != null &&
-          (w?.pageCount ?? w?.PageCount ?? w?.page_count ?? w?.pages) != null &&
-          (w?.creator ?? w?.Creator) != null;
-        if (!wasmHadAllFields) {
+        const camePdfcpu = (field) => w?.[field] != null && w[field] !== '';
+        const wasmCoveredEverything =
+          camePdfcpu('width') && camePdfcpu('height') &&
+          camePdfcpu('pageCount') && camePdfcpu('creator') &&
+          (meta.pdfXLevel == null || camePdfcpu('pdfXLevel')) &&
+          meta.renderingIntent == null &&
+          meta.iccProfiles.length === 0;
+        if (!wasmCoveredEverything) {
           metaSource = 'pdfcpu + direct parsing (partial)';
         }
       }
@@ -1619,15 +2252,13 @@
       document.getElementById('about-dialog').close();
     });
 
-    // Show the app version from the manifest (kept in sync with manifest.json).
-    fetch('manifest.json')
-      .then((res) => res.json())
-      .then((mf) => {
-        if (mf.version) {
-          document.getElementById('about-version').textContent = `Version ${mf.version}`;
-        }
-      })
-      .catch(() => { /* non-fatal — just omit the version line */ });
+    // Show the app version (source of truth: APP_VERSION in sw.js).
+    appVersionPromise.then((version) => {
+      // Non-fatal when unavailable — just leave the version line as-is.
+      if (version) {
+        document.getElementById('about-version').textContent = `Version ${version}`;
+      }
+    });
 
     // ── RenderModule ─────────────────────────────────────────────
 
@@ -1729,13 +2360,12 @@
         // 2. Store filename without extension
         AppState.originalFileName = file.name.replace(/\.pdf$/i, '');
 
-        // 3. Reset state
-        AppState.screenshotBuffer = null;
-        AppState.screenshotPage = null;
+        // 3. Reset state — screenshots belong to the previous document
+        AppState.screenshots = [];
         AppState.resumePage = 1;
 
         // 4. Update UI resets
-        document.getElementById('btn-download-screenshot').disabled = true;
+        updateScreenshotButton();
         document.getElementById('start-page-input').value = '1';
         document.getElementById('btn-present').disabled = true; // disable while loading
 
@@ -2018,12 +2648,54 @@
     // ── ScreenshotModule ──────────────────────────────────────────
 
     /**
-     * Composite pdf-canvas + annotation-canvas into a PNG Blob and store
-     * it in AppState.screenshotBuffer.  Enables #btn-download-screenshot.
+     * Reflect the number of captured screenshots on the download button.
+     */
+    function updateScreenshotButton() {
+      const count = AppState.screenshots.length;
+      const btn = document.getElementById('btn-download-screenshots');
+      btn.disabled = count === 0;
+      btn.textContent = count === 0
+        ? 'Download screenshots'
+        : `Download screenshots (${count})`;
+    }
+
+    /** @type {number|null} setTimeout handle for hiding #capture-toast */
+    let captureToastTimer = null;
+
+    /**
+     * Briefly confirm a capture over the slide. Presenter view is fullscreen
+     * with the metadata panel hidden, so this is the only feedback that S
+     * worked and the only running count while presenting.
+     * @param {string} message
+     */
+    function showCaptureToast(message) {
+      const toast = document.getElementById('capture-toast');
+      toast.textContent = message;
+      toast.classList.add('visible');
+      if (captureToastTimer !== null) clearTimeout(captureToastTimer);
+      captureToastTimer = setTimeout(() => {
+        toast.classList.remove('visible');
+        captureToastTimer = null;
+      }, 1500);
+    }
+
+    /**
+     * Composite pdf-canvas + annotation-canvas into a PNG Blob and append it
+     * to AppState.screenshots. Each press of S stacks another screenshot;
+     * #btn-download-screenshots then writes out the whole stack.
      * @param {HTMLCanvasElement} pdfCv
      * @param {HTMLCanvasElement} annCv
      */
     async function captureScreenshot(pdfCv, annCv) {
+      // Read the page number and composite the canvases synchronously, before
+      // any await: a page turn while PNG encoding is in flight must not
+      // relabel this screenshot. Only the encoding is deferred, and the entry
+      // takes its place in the stack immediately, so holding S down cannot
+      // reorder the stack if one encode finishes ahead of an earlier one.
+      const page = AppState.currentPage;
+      /** @type {{page:number, blob:Promise<Blob>}|null} */
+      let entry = null;
+
       try {
         const w = pdfCv.width;
         const h = pdfCv.height;
@@ -2034,7 +2706,7 @@
           const ctx = offscreen.getContext('2d');
           ctx.drawImage(pdfCv, 0, 0);
           ctx.drawImage(annCv, 0, 0);
-          blob = await offscreen.convertToBlob({ type: 'image/png' });
+          blob = offscreen.convertToBlob({ type: 'image/png' });
         } else {
           // Fallback for older browsers
           const tmp = document.createElement('canvas');
@@ -2043,13 +2715,30 @@
           const ctx = tmp.getContext('2d');
           ctx.drawImage(pdfCv, 0, 0);
           ctx.drawImage(annCv, 0, 0);
-          blob = await new Promise((res) => tmp.toBlob(res, 'image/png'));
+          // toBlob reports failure as a null argument rather than throwing.
+          blob = new Promise((resolve, reject) => {
+            tmp.toBlob(
+              (b) => (b ? resolve(b) : reject(new Error('canvas PNG encoding failed'))),
+              'image/png'
+            );
+          });
         }
 
-        AppState.screenshotBuffer = blob;
-        AppState.screenshotPage   = AppState.currentPage;
-        document.getElementById('btn-download-screenshot').disabled = false;
+        entry = { page, blob };
+        AppState.screenshots.push(entry);
+        updateScreenshotButton();
+        showCaptureToast(
+          `Screenshot ${AppState.screenshots.length} captured — page ${page}`
+        );
+
+        await blob; // surface encoding failures here, not at download time
       } catch (err) {
+        // Drop the reserved slot so the stack only holds usable screenshots.
+        if (entry) {
+          const i = AppState.screenshots.indexOf(entry);
+          if (i !== -1) AppState.screenshots.splice(i, 1);
+          updateScreenshotButton();
+        }
         showError(`Screenshot failed: ${err.message ?? err}`);
       }
     }
@@ -2114,7 +2803,7 @@
           }
         }
 
-        doc.setCreator('PDFhero by NoSocial.Net v1.02');
+        doc.setCreator(`PDFhero by NoSocial.Net${appVersion ? ` v${appVersion}` : ''}`);
         const bytes    = await doc.save();
         const blob     = new Blob([bytes], { type: 'application/pdf' });
         const url      = URL.createObjectURL(blob);
@@ -2129,24 +2818,72 @@
     }
 
     /**
-     * Download the in-memory screenshot buffer as a PNG file.
+     * Build the filename for one captured screenshot.
+     *
+     * Both the capture sequence number and the page number are included, so
+     * the files sort into capture order by default while still saying which
+     * page each one came from. The sequence number also keeps repeated
+     * captures of the same page from overwriting each other.
+     *
+     * @param {string} base  Original filename without extension
+     * @param {number} seq   1-based position in the capture stack
+     * @param {number} page  Page number that was captured
+     * @returns {string}
      */
-    function downloadScreenshot() {
-      if (!AppState.screenshotBuffer) return;
-      const url  = URL.createObjectURL(AppState.screenshotBuffer);
-      const a    = document.createElement('a');
-      a.href     = url;
-      const page = String(AppState.screenshotPage ?? 1).padStart(3, '0');
-      a.download = (AppState.originalFileName ?? 'document') + `-${page}-PDFhero.png`;
-      a.click();
-      URL.revokeObjectURL(url);
+    function screenshotFileName(base, seq, page) {
+      const s = String(seq).padStart(3, '0');
+      const p = String(page).padStart(3, '0');
+      return `${base}-${s}-p${p}-PDFhero.png`;
+    }
+
+    /**
+     * Download every captured screenshot as a separate PNG file.
+     *
+     * The stack is left intact so it can be downloaded again. Browsers
+     * generally ask once per site for permission to save multiple files.
+     * @returns {Promise<void>}
+     */
+    async function downloadScreenshots() {
+      // Snapshot the stack: a capture during the run must not renumber the
+      // files being written out.
+      const shots = AppState.screenshots.slice();
+      if (shots.length === 0) return;
+
+      const base = AppState.originalFileName ?? 'document';
+      const btn = document.getElementById('btn-download-screenshots');
+
+      // Guard against a second click mid-run queueing a duplicate batch.
+      btn.disabled = true;
+      try {
+        for (let i = 0; i < shots.length; i++) {
+          const blob = await shots[i].blob;
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = screenshotFileName(base, i + 1, shots[i].page);
+          // Anchors must be in the document for the click to count as a
+          // user-initiated download in some browsers.
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          // Back-to-back clicks get coalesced or dropped, and revoking the
+          // URL too early cancels a download that has not started yet.
+          await new Promise((resolve) => setTimeout(resolve, 200));
+          URL.revokeObjectURL(url);
+        }
+      } catch (err) {
+        showError(`Screenshot download failed: ${err.message ?? err}`);
+      } finally {
+        // Re-enable and restore the count, however the run ended.
+        updateScreenshotButton();
+      }
     }
 
     // ── Main event wiring ─────────────────────────────────────────
 
     document.getElementById('btn-present').addEventListener('click', enterPresenterView);
     document.getElementById('btn-save').addEventListener('click', saveWithAnnotations);
-    document.getElementById('btn-download-screenshot').addEventListener('click', downloadScreenshot);
+    document.getElementById('btn-download-screenshots').addEventListener('click', downloadScreenshots);
 
     // Show the current viewport size immediately (other fields stay empty until a file loads)
     function updateViewportSize() {

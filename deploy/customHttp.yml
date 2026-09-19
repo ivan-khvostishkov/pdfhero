@@ -1,0 +1,29 @@
+# AWS Amplify Hosting custom response headers.
+# Copied to the root of the deployment bundle by .github/workflows/dist.yml;
+# Amplify picks it up from there. If a manual (drag-and-drop) deployment
+# ignores it, the same rules can be pasted into
+# Amplify console → Hosting → Custom headers.
+
+customHeaders:
+  # index.html and sw.js gate every update: a cached copy of either pins
+  # users to an old release, so they must always be revalidated.
+  - pattern: '/index.html'
+    headers:
+      - key: 'Cache-Control'
+        value: 'no-cache, no-store, must-revalidate'
+
+  - pattern: '/sw.js'
+    headers:
+      - key: 'Cache-Control'
+        value: 'no-cache, no-store, must-revalidate'
+
+  # WebAssembly.compileStreaming() rejects anything not served as
+  # application/wasm. index.html falls back to ArrayBuffer compilation,
+  # but the streaming path is faster and much lighter on memory for a
+  # binary this size.
+  - pattern: '**/*.wasm'
+    headers:
+      - key: 'Content-Type'
+        value: 'application/wasm'
+      - key: 'Cache-Control'
+        value: 'public, max-age=3600'

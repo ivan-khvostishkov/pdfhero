@@ -1,6 +1,12 @@
 // PDFhero Service Worker — cache-first strategy
-// Cache name and manifest.json version MUST be updated together on every release.
-const CACHE_NAME = 'pdfhero-v1.1.0';
+//
+// APP_VERSION is the single source of truth for the application version.
+// The cache name is derived from it, index.html reads it back out of this
+// file (see appVersionPromise), and the release workflow names the
+// deployment bundle after it. Bump it here on every release — nowhere else.
+const APP_VERSION = '1.2.0';
+
+const CACHE_NAME = `pdfhero-v${APP_VERSION}`;
 
 const CACHED_URLS = [
   './index.html',
@@ -39,6 +45,11 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   // Only handle GET requests
   if (event.request.method !== 'GET') return;
+
+  // Never serve this script from the cache: index.html reads APP_VERSION
+  // back out of it, and a cached copy would keep reporting the version of
+  // the release that first cached it.
+  if (new URL(event.request.url).pathname.endsWith('/sw.js')) return;
 
   event.respondWith(
     caches.match(event.request).then((cached) => {
