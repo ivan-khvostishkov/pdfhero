@@ -79,7 +79,8 @@
       font-weight: 600;
     }
 
-    /* File input (hidden — triggered via the metadata header label) */
+    /* File input — visually hidden but still focusable, so the label below
+       can act as the control while the keyboard tab order is preserved. */
     #file-input {
       position: absolute;
       width: 1px;
@@ -87,6 +88,31 @@
       opacity: 0;
       overflow: hidden;
       clip: rect(0 0 0 0);
+    }
+
+    /* Primary action. A <label> rather than a <button> because it has to
+       drive #file-input, but it is the first thing to do on the page, so it
+       carries the solid accent styling that #btn-present used to have. */
+    #btn-choose-file {
+      align-self: flex-start;
+      background: #e94560;
+      color: #fff;
+      border-radius: 6px;
+      padding: 12px 26px;
+      font-size: 1.05rem;
+      font-weight: 600;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+    }
+
+    #btn-choose-file:hover { background: #c73850; }
+
+    /* The real focus lands on the hidden input, so mirror the focus ring
+       onto the label that stands in for it. */
+    #file-input:focus-visible + #btn-choose-file {
+      outline: 2px solid #e0e0e0;
+      outline-offset: 3px;
     }
 
     /* Metadata panel (always visible) */
@@ -99,19 +125,18 @@
       min-height: 48px;
     }
 
-    /* Header line — acts as the "Choose file" button, becomes filename after load */
+    /* Header line — names the loaded file. Purely informational: choosing a
+       file is #btn-choose-file's job. */
     #metadata-panel .meta-filename {
       display: inline-block;
       font-weight: 600;
       font-size: 1rem;
-      color: #e94560;
+      color: #888;
       margin-bottom: 8px;
       word-break: break-all;
-      cursor: pointer;
-      user-select: none;
     }
 
-    #metadata-panel .meta-filename:hover { text-decoration: underline; }
+    #metadata-panel .meta-filename.has-file { color: #e94560; }
 
     .meta-row {
       display: flex;
@@ -179,14 +204,18 @@
       cursor: not-allowed;
     }
 
+    /* Secondary accent: clearly the next step once a file is loaded, without
+       competing with #btn-choose-file for attention before there is one. */
     #btn-present {
-      background: #e94560;
-      color: #fff;
-      padding: 9px 22px;
-      font-size: 1rem;
+      background: transparent;
+      border: 1px solid #e94560;
+      color: #e94560;
     }
 
-    #btn-present:not(:disabled):hover { background: #c73850; }
+    #btn-present:not(:disabled):hover {
+      background: #e94560;
+      color: #fff;
+    }
 
     #btn-about {
       background: transparent;
@@ -359,12 +388,14 @@
       <button id="btn-about">About</button>
     </div>
 
-    <!-- Hidden file input — triggered via the metadata header label -->
+    <!-- Primary action, first on the page: the visually hidden input is
+         immediately followed by the label that renders as its button. -->
     <input type="file" id="file-input" accept=".pdf" aria-label="Select a PDF file" />
+    <label id="btn-choose-file" for="file-input">Choose PDF file</label>
 
-    <!-- Metadata panel (always visible; header doubles as the file chooser) -->
+    <!-- Metadata panel (always visible) -->
     <div id="metadata-panel" role="region" aria-label="PDF metadata">
-      <label class="meta-filename" id="meta-filename" for="file-input">Choose file</label>
+      <span class="meta-filename" id="meta-filename">No file selected</span>
       <div class="meta-row meta-viewport-row"><span class="meta-label">Viewport size</span><span id="meta-viewport"></span></div>
       <div class="meta-row"><span class="meta-label">Document size</span><span id="meta-size"></span></div>
       <div class="meta-row"><span class="meta-label">Page count</span><span id="meta-page-count"></span></div>
@@ -433,13 +464,25 @@
        the ordinary command-line tool compiled to WASM — it opens its
        input by path — so with that stub it can never read a PDF and
        falls back to printing its usage text.
-       Defining globalThis.fs / globalThis.process here makes
-       wasm_exec.js skip its stubs (it guards both with `if (!…)`). -->
+       Defining globalThis.fs / globalThis.process / globalThis.path here makes
+       wasm_exec.js skip its stubs (it guards each with `if (!…)`).
+       All three globals are required: Go's syscall.Open finishes by calling
+       globalThis.path.resolve(), and wasm_exec.js's own stub for that joins
+       segments blindly — it neither resolves against the cwd nor normalises,
+       so paths like "./doc.pdf" would never match the file that was staged. -->
   <script>
   (() => {
     'use strict';
 
     const decoder = new TextDecoder('utf-8');
+
+    /**
+     * Verbose tracing of the Go↔JS bridge. Enable by loading the page with
+     * ?pdfcpuDebug in the URL — it logs every filesystem call pdfcpu makes
+     * plus a staged pdfcpu self-test, which is how you find out where a Go
+     * panic actually happened.
+     */
+    const DEBUG = /[?&]pdfcpuDebug\b/.test(globalThis.location?.search ?? '');
 
     const S_IFREG = 0o100000;
     const S_IFDIR = 0o040000;
@@ -582,11 +625,19 @@
       return decoder.decode(all);
     }
 
+    /**
+     * Open flags. Go reads these from `fs.constants` and ORs the ones it wants
+     * into the `flags` argument of open(), so the numbers only have to agree
+     * with the ones interpreted in open() below — these are the Linux values.
+     * O_DIRECTORY is optional (Go probes for it and falls back to -1), but
+     * without it os.ReadDir on this filesystem fails.
+     */
     const O = {
-      O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512, O_APPEND: 1024,
+      O_WRONLY: 1, O_RDWR: 2, O_CREAT: 64, O_EXCL: 128, O_TRUNC: 512,
+      O_APPEND: 1024, O_DIRECTORY: 65536,
     };
 
-    globalThis.fs = {
+    const fsImpl = {
       constants: O,
 
       writeSync(fd, buf) {
@@ -648,6 +699,9 @@
           if (isDir(node)) return later(callback, fail('EISDIR'));
           node.data = new Uint8Array(0);
         }
+        if ((flags & O.O_DIRECTORY) !== 0 && !isDir(node)) {
+          return later(callback, fail('ENOTDIR'));
+        }
         const append = (flags & O.O_APPEND) !== 0;
         const fd = nextFd++;
         handles.set(fd, {
@@ -679,7 +733,7 @@
         later(callback, null, statOf(node));
       },
 
-      lstat(path, callback) { globalThis.fs.stat(path, callback); },
+      lstat(path, callback) { fsImpl.stat(path, callback); },
 
       readdir(path, callback) {
         const p = normalize(path);
@@ -810,7 +864,41 @@
       node.mtimeMs = Date.now();
     }
 
-    globalThis.process = {
+    /**
+     * Node's `path` module, as much of it as Go asks for.
+     *
+     * syscall.Open (Go 1.23+) ends with
+     *   path = jsPath.Call("resolve", path).String()
+     * where jsPath is globalThis.path. When that global is absent the call is
+     * made on `undefined`, which is the Go panic
+     *   syscall/js: call of Value.Call on undefined
+     * — raised after open() has already succeeded, so every single file Go
+     * opens blows up no matter how complete the fs shim is.
+     */
+    const pathImpl = {
+      /**
+       * Node's path.resolve: walk the segments right-to-left until an absolute
+       * one is found, then anchor whatever is left at the cwd.
+       * @param {...string} segments
+       * @returns {string}  Normalised absolute path
+       */
+      resolve(...segments) {
+        let joined = '';
+        for (let i = segments.length - 1; i >= 0; i--) {
+          const seg = String(segments[i] ?? '');
+          if (seg === '') continue;
+          joined = joined === '' ? seg : seg + '/' + joined;
+          if (seg.startsWith('/')) break;
+        }
+        return normalize(joined);   // prepends cwd when not already absolute
+      },
+    };
+
+    const processImpl = {
+      // Go's net/http checks `process.argv0` to find out whether it is running
+      // under Node (in which case it avoids the Fetch API). Anything that does
+      // not start with "node" keeps the browser path, which is what we want.
+      argv0: 'pdfcpu',
       getuid() { return -1; },
       getgid() { return -1; },
       geteuid() { return -1; },
@@ -824,6 +912,57 @@
     };
 
     /**
+     * Go looks members of `fs`, `process` and `path` up by name, lazily, and
+     * when one is absent it panics with
+     *   syscall/js: call of Value.Call on undefined
+     * naming neither the object nor the member. Routing every lookup through
+     * a proxy turns that dead end into a message that says what to add, which
+     * is the only warning we get when a pdfcpu.wasm rebuilt with a newer Go
+     * starts expecting calls this shim never saw.
+     * @template {object} T
+     * @param {string} name
+     * @param {T} impl
+     * @returns {T}
+     */
+    function bridge(name, impl) {
+      return new Proxy(impl, {
+        get(target, prop, receiver) {
+          const value = Reflect.get(target, prop, receiver);
+          if (value === undefined && typeof prop === 'string') {
+            console.error(
+              `[MemFS] the Go runtime asked for globalThis.${name}.${prop}, ` +
+              'which this shim does not implement.'
+            );
+            return undefined;
+          }
+          if (DEBUG && typeof value === 'function') {
+            return function (...args) {
+              console.debug(
+                `[MemFS] ${name}.${prop}`,
+                ...args.map((a) => (typeof a === 'function' ? '<callback>' : a))
+              );
+              return value.apply(target, args);
+            };
+          }
+          return value;
+        },
+      });
+    }
+
+    globalThis.fs = bridge('fs', fsImpl);
+    globalThis.process = bridge('process', processImpl);
+    globalThis.path = bridge('path', pathImpl);
+
+    // Globals the Go runtime and standard library resolve once at start-up.
+    // A missing one surfaces far later as an opaque panic, so name it now.
+    for (const name of ['crypto', 'Uint8Array', 'Object', 'Array', 'Date',
+                        'TextEncoder', 'TextDecoder']) {
+      if (globalThis[name] === undefined) {
+        console.error(`[MemFS] globalThis.${name} is missing — the Go runtime requires it.`);
+      }
+    }
+
+    /**
      * Control surface used by the pdfcpu runner below.
      * @type {{
      *   reset: () => void,
@@ -831,9 +970,12 @@
      *   readFile: (path: string) => Uint8Array|null,
      *   stdout: () => string,
      *   stderr: () => string,
+     *   debug: boolean,
      * }}
      */
     globalThis.MemFS = {
+      debug: DEBUG,
+
       /** Discard all files, handles and captured output. */
       reset() {
         nodes = new Map();
@@ -869,8 +1011,9 @@
   </script>
 
   <!-- ── Go WASM runtime (wasm_exec.js — inlined verbatim) ─────── -->
-  <!-- Source: https://raw.githubusercontent.com/golang/go/go1.21.0/misc/wasm/wasm_exec.js -->
-  <!-- Required to run pdfcpu WASM (a Go-compiled WebAssembly binary) -->
+  <!-- Source: https://raw.githubusercontent.com/golang/go/go1.26.0/lib/wasm/wasm_exec.js -->
+  <!-- Required to run pdfcpu WASM (a Go-compiled WebAssembly binary).
+       Must match the Go toolchain pdfcpu.wasm was built with — go1.26. -->
   <script>
 // Copyright 2018 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -888,7 +1031,7 @@
 	if (!globalThis.fs) {
 		let outputBuf = "";
 		globalThis.fs = {
-			constants: { O_WRONLY: -1, O_RDWR: -1, O_CREAT: -1, O_TRUNC: -1, O_APPEND: -1, O_EXCL: -1 }, // unused
+			constants: { O_WRONLY: -1, O_RDWR: -1, O_CREAT: -1, O_TRUNC: -1, O_APPEND: -1, O_EXCL: -1, O_DIRECTORY: -1 }, // unused
 			writeSync(fd, buf) {
 				outputBuf += decoder.decode(buf);
 				const nl = outputBuf.lastIndexOf("\n");
@@ -944,6 +1087,14 @@
 			umask() { throw enosys(); },
 			cwd() { throw enosys(); },
 			chdir() { throw enosys(); },
+		}
+	}
+
+	if (!globalThis.path) {
+		globalThis.path = {
+			resolve(...pathSegments) {
+				return pathSegments.join("/");
+			}
 		}
 	}
 
@@ -1082,10 +1233,16 @@
 				return decoder.decode(new DataView(this._inst.exports.mem.buffer, saddr, len));
 			}
 
+			const testCallExport = (a, b) => {
+				this._inst.exports.testExport0();
+				return this._inst.exports.testExport(a, b);
+			}
+
 			const timeOrigin = Date.now() - performance.now();
 			this.importObject = {
 				_gotest: {
 					add: (a, b) => a + b,
+					callExport: testCallExport,
 				},
 				gojs: {
 					// Go's SP does not change as long as no Go code is running. Some operations (e.g. calls, getters and setters)
@@ -1614,6 +1771,7 @@
           pdfcpuModule = await WebAssembly.compile(await res.arrayBuffer());
         }
         pdfcpuReady = true;
+        if (globalThis.MemFS.debug) await pdfcpuSelfTest();
       } catch (err) {
         console.error('pdfcpu WASM init failed:', err);
         // Non-blocking: show banner but keep file selection enabled
@@ -1654,22 +1812,56 @@
         let exitCode = 0;
         go.exit = (code) => { exitCode = code; };
 
+        if (globalThis.MemFS.debug) console.debug('[pdfcpu] run', go.argv.join(' '));
+
         const instance = await WebAssembly.instantiate(pdfcpuModule, go.importObject);
         // Resolves when the Go program exits — which the CLI always does.
         await go.run(instance);
 
-        return {
+        const result = {
           exitCode,
           stdout: globalThis.MemFS.stdout(),
           stderr: globalThis.MemFS.stderr(),
           readFile: (path) => globalThis.MemFS.readFile(path),
         };
+
+        if (globalThis.MemFS.debug) {
+          console.debug('[pdfcpu] exit', result.exitCode,
+                        '\nstdout:', result.stdout,
+                        '\nstderr:', result.stderr);
+        }
+
+        return result;
       };
 
       // Chain onto the queue, and keep the queue alive across failures.
       const result = pdfcpuQueue.then(run, run);
       pdfcpuQueue = result.catch(() => {});
       return result;
+    }
+
+    /**
+     * Run pdfcpu commands of increasing complexity and log each result.
+     *
+     * A Go panic is reported by pdfcpu's own recover() as a bare message with
+     * no stack, so the only way to locate one is to find the simplest command
+     * that triggers it: `version` exercises start-up, argument parsing and
+     * stdout but touches no file, so if it succeeds the fault is in the
+     * filesystem bridge, and if it panics the fault is in start-up.
+     *
+     * Only runs with ?pdfcpuDebug in the page URL.
+     * @returns {Promise<void>}
+     */
+    async function pdfcpuSelfTest() {
+      for (const argv of [['version'], ['version', '--conf', 'disable']]) {
+        try {
+          const { exitCode, stdout, stderr } = await runPdfcpu(argv);
+          console.info(`[pdfcpu] self-test \`${argv.join(' ')}\` → exit ${exitCode}`,
+                       stdout.trim() || stderr.trim());
+        } catch (err) {
+          console.error(`[pdfcpu] self-test \`${argv.join(' ')}\` threw:`, err);
+        }
+      }
     }
 
     /**
@@ -1685,6 +1877,14 @@
      */
     async function pdfcpuInfo(pdfBytes) {
       const IN_PATH = '/in.pdf';
+
+      // Same work, plain-text output: separates a fault in reading the PDF
+      // from one in pdfcpu's JSON writer.
+      if (globalThis.MemFS.debug) {
+        await runPdfcpu(['info', '--conf', 'disable', '--offline', IN_PATH],
+                        { [IN_PATH]: pdfBytes });
+      }
+
       const { exitCode, stdout, stderr } = await runPdfcpu(
         ['info', '--json', '--conf', 'disable', '--offline', IN_PATH],
         { [IN_PATH]: pdfBytes }
@@ -2369,8 +2569,10 @@
         document.getElementById('start-page-input').value = '1';
         document.getElementById('btn-present').disabled = true; // disable while loading
 
-        // 5. Header label becomes the filename (replaces "Choose file")
-        document.getElementById('meta-filename').textContent = file.name;
+        // 5. Panel header names the file (replaces "No file selected")
+        const filenameEl = document.getElementById('meta-filename');
+        filenameEl.textContent = file.name;
+        filenameEl.classList.add('has-file');
 
         // 6. Extract metadata
         const meta = await extractMetadata(AppState.pdfBytes);
