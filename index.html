@@ -492,7 +492,7 @@
       <div class="shortcut-row"><span class="shortcut-key">Tap left edge</span><span>Previous page (left fifth of the black area)</span></div>
       <div class="shortcut-row"><span class="shortcut-key">Tap right edge</span><span>Next page (right fifth of the black area)</span></div>
       <div class="shortcut-row"><span class="shortcut-key">Long press</span><span>Capture screenshot (anywhere on the black area)</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">Double tap</span><span>Exit presenter view (middle of the black area, not the paging edges)</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Double tap</span><span>Exit presenter view (anywhere on the black area, including the paging edges)</span></div>
     </div>
 
   </section>
@@ -3207,6 +3207,9 @@
     // ── PresenterModule — page navigation ────────────────────────
 
     async function navigatePage(delta) {
+      // Page turns can be queued (the background tap gestures hold them for
+      // the double-tap window), so the presentation may be over by now.
+      if (!AppState.isPresenting) return;
       const next = AppState.currentPage + delta;
       if (next < 1 || next > AppState.pageCount) return;
       AppState.currentPage = next;
@@ -3359,23 +3362,32 @@
     //
     // Touch devices have no keyboard, so the black margin around the slide
     // carries the presenter controls: the outer fifths page back and forward,
-    // a long press screenshots, and a double tap in the middle band exits.
+    // a long press screenshots, and a double tap anywhere on the black exits.
     // Only events whose target is the background itself count — anything on
     // the slide belongs to drawing. Mouse clicks work the same way; the
     // keyboard shortcuts remain the faster route on a desktop.
+    //
+    // Exit outranks paging: a double tap in a paging band exits rather than
+    // turning two pages. That is why a page turn is held for the length of the
+    // double-tap window instead of firing on pointerup — the first tap of an
+    // exit gesture must not flip a page on its way out.
 
     /** Fraction of the window width on each side that navigates. */
     const NAV_ZONE = 0.2;
     /** Press duration that counts as "long" (screenshot), in ms. */
     const LONG_PRESS_MS = 550;
-    /** Maximum gap between two taps to count as a double tap, in ms. */
-    const DOUBLE_TAP_MS = 320;
+    /**
+     * Maximum gap between two taps to count as a double tap, in ms. This is
+     * also how long a page turn is held back, so it stays short.
+     */
+    const DOUBLE_TAP_MS = 260;
     /** Movement that turns a tap into a drag and cancels it, in CSS px. */
     const TAP_SLOP = 12;
 
     /** @type {{id: number, x: number, y: number, consumed: boolean}|null} */
     let bgTap = null;
     let longPressTimer = null;
+    let pendingNavTimer = null;
     let lastTapTime = 0;
 
     const isBackground = (target) =>
@@ -3385,6 +3397,14 @@
       if (longPressTimer !== null) {
         clearTimeout(longPressTimer);
         longPressTimer = null;
+      }
+    }
+
+    /** Drop a page turn that is still waiting out the double-tap window. */
+    function cancelPendingNav() {
+      if (pendingNavTimer !== null) {
+        clearTimeout(pendingNavTimer);
+        pendingNavTimer = null;
       }
     }
 
@@ -3417,27 +3437,27 @@
       cancelLongPress();
       if (tap.consumed) return;             // the long press already acted
 
-      // Which band of the window the tap landed in decides the action.
-      const fraction = e.clientX / window.innerWidth;
-      const delta = fraction <= NAV_ZONE ? -1 : (fraction >= 1 - NAV_ZONE ? +1 : 0);
-
-      if (delta !== 0) {
-        // Page turns fire immediately, and the edge bands deliberately do not
-        // listen for a double tap: paging twice in quick succession is normal,
-        // and must never be read as "leave the presentation".
-        lastTapTime = 0;
-        navigatePage(delta);
-        return;
-      }
-
-      // Middle band: a second tap inside the double-tap window exits.
+      // A second tap anywhere on the background exits, and takes the page
+      // turn the first tap queued down with it.
       const now = Date.now();
       if (now - lastTapTime < DOUBLE_TAP_MS) {
         lastTapTime = 0;
+        cancelPendingNav();
         exitPresenterView();
         return;
       }
       lastTapTime = now;
+
+      // Single tap in an edge band: queue the page turn and run it only once
+      // the double-tap window has passed without a second tap.
+      const fraction = e.clientX / window.innerWidth;
+      const delta = fraction <= NAV_ZONE ? -1 : (fraction >= 1 - NAV_ZONE ? +1 : 0);
+      if (delta === 0) return;
+      cancelPendingNav();
+      pendingNavTimer = setTimeout(() => {
+        pendingNavTimer = null;
+        navigatePage(delta);
+      }, DOUBLE_TAP_MS);
     });
 
     presenterSection.addEventListener('pointercancel', () => {
