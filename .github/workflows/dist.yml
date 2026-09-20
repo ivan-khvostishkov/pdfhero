@@ -24,7 +24,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Read APP_VERSION from sw.js
         id: version
@@ -44,8 +44,9 @@ jobs:
           mkdir -p dist
           cp index.html manifest.json sw.js pdfcpu.wasm dist/
           cp deploy/customHttp.yml dist/
-          # Optional: manifest.json currently declares no icons, so icons/
-          # is picked up automatically if and when it is added.
+          # Optional: the app icon is an inline SVG data URI (in index.html
+          # and manifest.json), so there is no icons/ directory to ship —
+          # but one is picked up automatically if it is ever added.
           if [ -d icons ]; then cp -r icons dist/; fi
 
       - name: Verify bundle
@@ -76,7 +77,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Amplify deployment bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pdfhero-dist-v${{ steps.version.outputs.version }}
           # Naming the directory (not dist/*) makes dist/ the artifact root,

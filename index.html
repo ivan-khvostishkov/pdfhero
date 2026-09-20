@@ -5,6 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>PDFhero</title>
 
+  <!-- Favicon: an inline SVG data URI rather than a favicon.ico file, so the
+       browser stops requesting /favicon.ico (404) without adding a second
+       file to what is deliberately a single-file app. Brand accent square
+       with "PDF" set in it; the same icon is referenced from manifest.json. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='12'%20fill='%23e94560'/%3E%3Ctext%20x='32'%20y='42'%20text-anchor='middle'%20font-family='system-ui,sans-serif'%20font-size='21'%20font-weight='700'%20fill='%23fff'%3EPDF%3C/text%3E%3C/svg%3E" />
+
   <!-- PWA manifest -->
   <link rel="manifest" href="manifest.json" />
   <meta name="theme-color" content="#e94560" />
@@ -90,11 +96,19 @@
       clip: rect(0 0 0 0);
     }
 
+    /* Top action row. #btn-download-screenshots is pushed to the far right
+       (see its own rule) so the row reads primary action → stack download. */
+    #file-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;   /* narrow viewports: the download drops to its own line */
+    }
+
     /* Primary action. A <label> rather than a <button> because it has to
        drive #file-input, but it is the first thing to do on the page, so it
        carries the solid accent styling that #btn-present used to have. */
     #btn-choose-file {
-      align-self: flex-start;
       background: #e94560;
       color: #fff;
       border-radius: 6px;
@@ -232,6 +246,14 @@
       color: #e0e0e0;
     }
 
+    /* Trailing item of the top row, and a secondary one: right-aligned and a
+       size down from #btn-choose-file next to it. */
+    #btn-download-screenshots {
+      margin-left: auto;
+      padding: 9px 14px;
+      font-size: 0.85rem;
+    }
+
     #btn-save:hover { background: #1a4a7a; }
     #btn-download-screenshots:not(:disabled):hover { background: #1a4a7a; }
 
@@ -299,7 +321,13 @@
     }
 
     /* ── About dialog ─────────────────────────────────────────────── */
+    /* The reset at the top of this sheet zeroes the `margin: auto` the UA
+       stylesheet uses to centre a modal dialog, which is what pinned this one
+       to the top-left corner. Restore it, then lift the box a little above the
+       middle — a short dialog reads better slightly high than at dead centre. */
     #about-dialog {
+      margin: auto;
+      transform: translateY(-6vh);
       background: #16213e;
       color: #e0e0e0;
       border: 1px solid #0f3460;
@@ -388,10 +416,14 @@
       <button id="btn-about">About</button>
     </div>
 
-    <!-- Primary action, first on the page: the visually hidden input is
-         immediately followed by the label that renders as its button. -->
-    <input type="file" id="file-input" accept=".pdf" aria-label="Select a PDF file" />
-    <label id="btn-choose-file" for="file-input">Choose PDF file</label>
+    <!-- Top action row: the primary action on the left, the screenshot stack
+         on the right. The visually hidden input stays immediately before the
+         label that renders as its button. -->
+    <div id="file-row">
+      <input type="file" id="file-input" accept=".pdf" aria-label="Select a PDF file" />
+      <label id="btn-choose-file" for="file-input">Choose PDF file</label>
+      <button id="btn-download-screenshots" disabled>Download screenshots</button>
+    </div>
 
     <!-- Metadata panel (always visible) -->
     <div id="metadata-panel" role="region" aria-label="PDF metadata">
@@ -401,20 +433,18 @@
       <div class="meta-row"><span class="meta-label">Page count</span><span id="meta-page-count"></span></div>
       <div class="meta-row"><span class="meta-label">Creator</span><span id="meta-creator"></span></div>
       <div class="meta-row"><span class="meta-label">PDF/X level</span><span id="meta-pdfx"></span></div>
-      <div class="meta-row"><span class="meta-label">Rendering intent</span><span id="meta-rendering-intent"></span></div>
+      <div class="meta-row"><span class="meta-label">Output intent</span><span id="meta-output-intent"></span></div>
       <div class="meta-row"><span class="meta-label">ICC profiles</span><span id="meta-icc"></span></div>
       <div class="meta-row"><span class="meta-label">Metadata source</span><span id="meta-source"></span></div>
     </div>
 
-    <!-- Present controls -->
+    <!-- Present controls: the action, the page it starts on, then saving -->
     <div id="present-controls">
+      <button id="btn-present" disabled>Present as a hero</button>
       <label for="start-page-input">Start page:</label>
       <input type="number" id="start-page-input" value="1" min="1" aria-label="Start page number" />
-      <button id="btn-present" disabled>Present as a hero</button>
+      <button id="btn-save" disabled>Save with annotations</button>
     </div>
-
-    <button id="btn-save">Save with annotations</button>
-    <button id="btn-download-screenshots" disabled>Download screenshots</button>
 
     <!-- Shortcut legend — moved after the metadata / present block -->
     <div id="shortcut-legend">
@@ -424,8 +454,7 @@
       <div class="shortcut-row"><span class="shortcut-key">← / Page Up</span><span>Previous page</span></div>
       <div class="shortcut-row"><span class="shortcut-key">Q</span><span>Exit presenter view</span></div>
       <div class="shortcut-row"><span class="shortcut-key">E</span><span>Erase all annotations</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">U</span><span>Undo last stroke</span></div>
-      <div class="shortcut-row"><span class="shortcut-key">Z</span><span>Redo last undone stroke</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">U / Z</span><span>Undo / redo last stroke</span></div>
       <div class="shortcut-row"><span class="shortcut-key">S</span><span>Capture screenshot (adds to the download stack)</span></div>
     </div>
 
@@ -1653,7 +1682,7 @@
         pageCount: null,
         creator: null,
         pdfXLevel: null,
-        renderingIntent: null,
+        outputIntent: null,    // e.g. "US Web Coated (SWOP) v2"
         iccProfiles: [],       // string[]
       },
 
@@ -1981,22 +2010,16 @@
     // ── MetadataModule — extractMetadata ─────────────────────────
 
     /**
-     * Known ICC rendering intent strings to scan for in the PDF byte stream.
+     * Keys of an /OutputIntent dictionary that name the printing condition the
+     * file was prepared for, in the order they are preferred for display.
+     *
+     * /OutputConditionIdentifier is the registered name of the condition
+     * ("CGATS TR 001", "FOGRA39"); /Info is the free-text name, which is
+     * usually the ICC profile ("U.S. Web Coated (SWOP) v2") and therefore the
+     * one people recognise. Both are shown when they differ.
      * @type {string[]}
      */
-    const KNOWN_RENDERING_INTENTS = [
-      'RelativeColorimetric',
-      'AbsoluteColorimetric',
-      'Perceptual',
-      'Saturation',
-    ];
-
-    /**
-     * Known ICC profile names to look for in /ICCBased references
-     * and common ICC stream dictionary names.
-     * @type {string[]}
-     */
-    const KNOWN_ICC_PROFILES = ['sRGB', 'AdobeRGB', 'ProPhotoRGB'];
+    const OUTPUT_INTENT_KEYS = ['OutputConditionIdentifier', 'Info', 'OutputCondition'];
 
     /**
      * Decode a Uint8Array slice to a Latin-1 / ASCII string for regex scanning.
@@ -2026,38 +2049,110 @@
     }
 
     /**
-     * Parse a PDF string value following a key in the raw PDF stream.
-     * Handles both `(literal string)` and `<hex string>` forms.
-     * Returns null if the key is absent or the value cannot be decoded.
+     * Decode the bytes of a PDF text string. A leading UTF-16BE byte order
+     * mark means the rest is UTF-16; otherwise the bytes are PDFDocEncoding,
+     * which agrees with Latin-1 over everything we display.
+     * @param {string} s  Raw string bytes, one character per byte
+     * @returns {string}
+     */
+    function decodePdfText(s) {
+      if (s.charCodeAt(0) === 0xFE && s.charCodeAt(1) === 0xFF) {
+        let out = '';
+        for (let i = 2; i + 1 < s.length; i += 2) {
+          out += String.fromCharCode((s.charCodeAt(i) << 8) | s.charCodeAt(i + 1));
+        }
+        return out;
+      }
+      return s;
+    }
+
+    /**
+     * Read a PDF literal string starting at the opening parenthesis.
+     *
+     * Parentheses nest and can be escaped, which a single regex cannot follow:
+     * the common value `(U.S. Web Coated \(SWOP\) v2)` is truncated at the
+     * first `\)` by a `[^)]*` pattern.
+     *
+     * @param {string} raw       Latin-1 decoded PDF stream
+     * @param {number} openIdx   Index of the '(' that opens the string
+     * @returns {string|null}
+     */
+    function readPdfLiteralString(raw, openIdx) {
+      let depth = 0;
+      let out = '';
+      for (let i = openIdx; i < raw.length; i++) {
+        const c = raw[i];
+        if (c === '\\') {
+          const n = raw[++i];
+          if (n === undefined) break;
+          if (n === 'n') out += '\n';
+          else if (n === 'r') out += '\r';
+          else if (n === 't') out += '\t';
+          else if (n === 'b') out += '\b';
+          else if (n === 'f') out += '\f';
+          else if (n === '\n' || n === '\r') { /* line continuation */ }
+          else if (n >= '0' && n <= '7') {
+            let oct = n;
+            while (oct.length < 3 && raw[i + 1] >= '0' && raw[i + 1] <= '7') oct += raw[++i];
+            out += String.fromCharCode(parseInt(oct, 8));
+          } else {
+            out += n;            // \( \) \\ and any other escaped character
+          }
+          continue;
+        }
+        if (c === '(') {
+          depth++;
+          if (depth === 1) continue;   // the opening delimiter itself
+        } else if (c === ')') {
+          depth--;
+          if (depth === 0) break;
+        }
+        out += c;
+      }
+      return decodePdfText(out).trim() || null;
+    }
+
+    /**
+     * Read a PDF hex string starting at the opening angle bracket.
+     * @param {string} raw
+     * @param {number} openIdx   Index of the '<' that opens the string
+     * @returns {string|null}
+     */
+    function readPdfHexString(raw, openIdx) {
+      const close = raw.indexOf('>', openIdx);
+      if (close === -1) return null;
+      const hex = raw.substring(openIdx + 1, close).replace(/[^0-9A-Fa-f]/g, '');
+      let s = '';
+      for (let i = 0; i + 1 < hex.length; i += 2) {
+        s += String.fromCharCode(parseInt(hex.substring(i, i + 2), 16));
+      }
+      return decodePdfText(s).trim() || null;
+    }
+
+    /**
+     * Parse the string value of `/key` in the raw PDF stream, in either the
+     * `(literal)` or `<hex>` form.
+     *
+     * Occurrences are tried in order until one actually carries a string, so a
+     * key that appears first as an indirect reference (`/Info 5 0 R` in the
+     * trailer) does not mask a later dictionary entry that holds the text.
+     *
      * @param {string} raw   Latin-1 decoded PDF stream
      * @param {string} key   PDF key name without leading slash, e.g. "Creator"
      * @returns {string|null}
      */
     function parsePdfStringValue(raw, key) {
-      // Match /Key (literal string) or /Key<hexstring>
-      const literalRe = new RegExp('\\/' + key + '\\s*\\(([^)]*)\\)');
-      const hexRe = new RegExp('\\/' + key + '\\s*<([0-9A-Fa-f]*)>');
-
-      let m = literalRe.exec(raw);
-      if (m) {
-        // Strip PDF escape sequences minimally
-        return m[1].replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\\\/g, '\\').replace(/\\(.)/g, '$1').trim() || null;
+      // The negative lookahead stops /Info from matching /InfoDict, and
+      // /OutputCondition from matching /OutputConditionIdentifier.
+      const re = new RegExp('\\/' + key + '(?![A-Za-z0-9])\\s*', 'g');
+      let m;
+      while ((m = re.exec(raw)) !== null) {
+        const at = m.index + m[0].length;
+        let value = null;
+        if (raw[at] === '(') value = readPdfLiteralString(raw, at);
+        else if (raw[at] === '<' && raw[at + 1] !== '<') value = readPdfHexString(raw, at);
+        if (value) return value;
       }
-
-      m = hexRe.exec(raw);
-      if (m) {
-        try {
-          const hex = m[1];
-          let str = '';
-          for (let i = 0; i < hex.length - 1; i += 2) {
-            str += String.fromCharCode(parseInt(hex.substring(i, i + 2), 16));
-          }
-          return str.trim() || null;
-        } catch {
-          return null;
-        }
-      }
-
       return null;
     }
 
@@ -2071,13 +2166,15 @@
      *  - creator    : /Creator string from the document info dictionary
      *  - width/height: first /MediaBox [0 0 W H] found in a page dictionary
      *  - pdfXLevel  : /GTS_PDFXVersion string or "PDF/X" marker
-     *  - renderingIntent: /Intent string or first known intent keyword found
-     *  - iccProfiles: array of recognised ICC profile name strings
+     *  - outputIntent: printing condition named by the /OutputIntent dictionary
+     *
+     * ICC profiles are not read here — naming them means decompressing the
+     * profile streams, which readIccProfiles() does asynchronously.
      *
      * @param {Uint8Array} pdfBytes
      * @returns {{ width:number|null, height:number|null, pageCount:number|null,
      *             creator:string|null, pdfXLevel:string|null,
-     *             renderingIntent:string|null, iccProfiles:string[] }}
+     *             outputIntent:string|null }}
      */
     function parsePdfFallback(pdfBytes) {
       let width = null;
@@ -2085,8 +2182,7 @@
       let pageCount = null;
       let creator = null;
       let pdfXLevel = null;
-      let renderingIntent = null;
-      const iccProfiles = [];
+      let outputIntent = null;
 
       try {
         const raw = bytesToLatin1Full(pdfBytes);
@@ -2138,35 +2234,27 @@
           }
         } catch { /* ignore */ }
 
-        // ── renderingIntent ───────────────────────────────────────
+        // ── outputIntent ──────────────────────────────────────────
+        // /OutputIntents [ << /Type /OutputIntent /S /GTS_PDFX
+        //                     /OutputConditionIdentifier (CGATS TR 001)
+        //                     /Info (U.S. Web Coated (SWOP) v2)
+        //                     /DestOutputProfile 12 0 R >> ]
+        // Only the dictionary itself is searched: /Info also names the
+        // document information dictionary in the trailer, and /OutputCondition
+        // may hold an unrelated remark elsewhere in the file.
         try {
-          // Check /Intent name value first
-          const intentNameRe = /\/Intent\s*\/(\w+)/;
-          const intentMatch = intentNameRe.exec(raw);
-          if (intentMatch && KNOWN_RENDERING_INTENTS.includes(intentMatch[1])) {
-            renderingIntent = intentMatch[1];
-          } else {
-            // Scan for known intent strings anywhere in stream
-            for (const intent of KNOWN_RENDERING_INTENTS) {
-              if (raw.includes(intent)) {
-                renderingIntent = intent;
-                break;
-              }
+          const at = raw.indexOf('/OutputIntent');
+          if (at !== -1) {
+            const dict = raw.substring(at, at + 2000);
+            const values = [];
+            for (const key of OUTPUT_INTENT_KEYS) {
+              const v = parsePdfStringValue(dict, key);
+              // Distiller repeats the same name under several keys.
+              if (v && !values.some((seen) => seen === v)) values.push(v);
             }
-          }
-        } catch { /* ignore */ }
-
-        // ── ICC profiles (/ICCBased references) ───────────────────
-        try {
-          for (const profileName of KNOWN_ICC_PROFILES) {
-            if (raw.includes(profileName) && !iccProfiles.includes(profileName)) {
-              iccProfiles.push(profileName);
-            }
-          }
-          // Also check for /ICCBased presence to signal unknown embedded profile
-          if (iccProfiles.length === 0 && raw.includes('/ICCBased')) {
-            // There is an ICC profile but we can't name it from the stream alone
-            iccProfiles.push('(embedded ICC)');
+            // Identifier plus free-text name, e.g. "CGATS TR 001 — U.S. Web
+            // Coated (SWOP) v2"; either alone when that is all there is.
+            if (values.length > 0) outputIntent = values.slice(0, 2).join(' — ');
           }
         } catch { /* ignore */ }
 
@@ -2174,7 +2262,283 @@
         console.warn('parsePdfFallback error:', err);
       }
 
-      return { width, height, pageCount, creator, pdfXLevel, renderingIntent, iccProfiles };
+      return { width, height, pageCount, creator, pdfXLevel, outputIntent };
+    }
+
+    // ── MetadataModule — embedded ICC profiles ────────────────────
+    //
+    // An embedded ICC profile is a complete .icc file stored as a PDF stream,
+    // and it carries its own name: the 'desc' tag of the profile holds the
+    // description its author gave it ("U.S. Web Coated (SWOP) v2",
+    // "sRGB IEC61966-2.1"). So the names are readable without any lookup
+    // table — the profile streams just have to be found and decompressed.
+
+    /**
+     * Find an ASCII needle in a byte array. Used instead of decoding the file
+     * to a string because ICC streams sit anywhere in a PDF, and turning a
+     * multi-megabyte document into a JS string to locate one object is far
+     * more expensive than scanning the bytes.
+     * @param {Uint8Array} bytes
+     * @param {string} needle
+     * @param {number} [from=0]
+     * @returns {number}  Index of the match, or -1
+     */
+    function indexOfAscii(bytes, needle, from = 0) {
+      const n = needle.length;
+      if (n === 0) return -1;
+      const first = needle.charCodeAt(0);
+      for (let i = Math.max(0, from); i <= bytes.length - n; i++) {
+        if (bytes[i] !== first) continue;
+        let j = 1;
+        while (j < n && bytes[i + j] === needle.charCodeAt(j)) j++;
+        if (j === n) return i;
+      }
+      return -1;
+    }
+
+    /**
+     * Decode `length` bytes as Latin-1, for reading short dictionary fragments.
+     * @param {Uint8Array} bytes
+     * @param {number} at
+     * @param {number} length
+     * @returns {string}
+     */
+    function latin1At(bytes, at, length) {
+      let s = '';
+      const end = Math.min(bytes.length, at + length);
+      for (let i = Math.max(0, at); i < end; i++) s += String.fromCharCode(bytes[i]);
+      return s;
+    }
+
+    /**
+     * Collect the object numbers of every indirect reference that follows
+     * `marker`, e.g. "/ICCBased 12 0 R" → 12.
+     * @param {Uint8Array} bytes
+     * @param {string} marker
+     * @param {number} [max=8]  Stop after this many references
+     * @returns {number[]}  Object numbers, in file order, without duplicates
+     */
+    function findIndirectRefs(bytes, marker, max = 8) {
+      const nums = [];
+      let at = 0;
+      while (nums.length < max) {
+        at = indexOfAscii(bytes, marker, at);
+        if (at === -1) break;
+        at += marker.length;
+        const m = /^\s*(\d+)\s+\d+\s+R/.exec(latin1At(bytes, at, 32));
+        if (m) {
+          const num = parseInt(m[1], 10);
+          if (!nums.includes(num)) nums.push(num);
+        }
+      }
+      return nums;
+    }
+
+    /**
+     * Find the body of object `objNum` and return the offset just past its
+     * "N G obj" header.
+     * @param {Uint8Array} bytes
+     * @param {number} objNum
+     * @returns {number}  Offset, or -1 when the object is not found
+     */
+    function findObjectBody(bytes, objNum) {
+      const needle = `${objNum} 0 obj`;
+      let at = 0;
+      while ((at = indexOfAscii(bytes, needle, at)) !== -1) {
+        // "12 0 obj" must not be the tail of "112 0 obj".
+        const before = at === 0 ? 0x0A : bytes[at - 1];
+        if (before === 0x0A || before === 0x0D || before === 0x20 || before === 0x09) {
+          return at + needle.length;
+        }
+        at += needle.length;
+      }
+      return -1;
+    }
+
+    /**
+     * Inflate a zlib (PDF /FlateDecode) byte stream.
+     * @param {Uint8Array} bytes
+     * @returns {Promise<Uint8Array>}
+     */
+    async function inflate(bytes) {
+      // Some writers omit the zlib wrapper, so raw deflate is the second try.
+      for (const format of ['deflate', 'deflate-raw']) {
+        try {
+          const stream = new Blob([bytes]).stream()
+            .pipeThrough(new DecompressionStream(format));
+          return new Uint8Array(await new Response(stream).arrayBuffer());
+        } catch { /* try the next format */ }
+      }
+      throw new Error('inflate failed');
+    }
+
+    /**
+     * Read the decoded contents of the stream belonging to object `objNum`.
+     * Only the uncompressed and /FlateDecode cases are handled — those are
+     * what ICC profiles are stored with in practice.
+     * @param {Uint8Array} bytes
+     * @param {number} objNum
+     * @returns {Promise<Uint8Array|null>}
+     */
+    async function readStreamObject(bytes, objNum) {
+      const body = findObjectBody(bytes, objNum);
+      if (body === -1) return null;
+
+      const keyword = indexOfAscii(bytes, 'stream', body);
+      if (keyword === -1) return null;
+
+      const dict = latin1At(bytes, body, keyword - body);
+      if (/\/Filter\s*\[?\s*\/(?!FlateDecode)/.test(dict)) return null;  // e.g. /DCTDecode
+
+      // Data starts after the EOL that must follow the "stream" keyword.
+      let at = keyword + 'stream'.length;
+      if (bytes[at] === 0x0D) at++;
+      if (bytes[at] === 0x0A) at++;
+
+      // /Length may be an indirect reference to an integer object.
+      let length = null;
+      const direct = /\/Length\s+(\d+)(?!\s+\d+\s+R)/.exec(dict);
+      const indirect = /\/Length\s+(\d+)\s+\d+\s+R/.exec(dict);
+      if (direct) {
+        length = parseInt(direct[1], 10);
+      } else if (indirect) {
+        const lenBody = findObjectBody(bytes, parseInt(indirect[1], 10));
+        const m = lenBody === -1 ? null : /^\s*(\d+)/.exec(latin1At(bytes, lenBody, 32));
+        if (m) length = parseInt(m[1], 10);
+      }
+      if (length == null) {
+        // Fall back to the endstream keyword when /Length is unusable.
+        const end = indexOfAscii(bytes, 'endstream', at);
+        if (end === -1) return null;
+        length = end - at;
+      }
+
+      const raw = bytes.subarray(at, Math.min(bytes.length, at + length));
+      if (raw.length === 0) return null;
+      if (!/\/Flate/.test(dict)) return raw;
+      try {
+        return await inflate(raw);
+      } catch {
+        return null;
+      }
+    }
+
+    /**
+     * Read the profile description and colour space out of an ICC profile.
+     *
+     * Layout: a 128-byte header (with 'acsp' at offset 36 and the data colour
+     * space at 16), then a tag table — a count followed by 12-byte entries of
+     * signature, offset and size. The 'desc' tag holds the name, as ICC v2
+     * textDescriptionType ('desc'), ICC v4 multiLocalizedUnicodeType ('mluc')
+     * or plain 'text'.
+     *
+     * @param {Uint8Array} icc
+     * @returns {{name:string|null, space:string|null}|null}  null if not ICC
+     */
+    function parseIccProfile(icc) {
+      if (icc.length < 132) return null;
+      const ascii = (at, len) => latin1At(icc, at, len);
+      const u32 = (at) => (icc[at] << 24 | icc[at + 1] << 16 | icc[at + 2] << 8 | icc[at + 3]) >>> 0;
+
+      if (ascii(36, 4) !== 'acsp') return null;   // profile file signature
+      const space = ascii(16, 4).trim() || null;
+
+      const tagCount = u32(128);
+      if (tagCount > 200) return { name: null, space };   // not a sane tag table
+
+      for (let i = 0; i < tagCount; i++) {
+        const entry = 132 + i * 12;
+        if (entry + 12 > icc.length) break;
+        if (ascii(entry, 4) !== 'desc') continue;
+
+        const at = u32(entry + 4);
+        const size = u32(entry + 8);
+        if (at + 12 > icc.length) break;
+
+        const type = ascii(at, 4);
+        if (type === 'desc') {                    // ICC v2: ASCII, NUL-terminated
+          const len = u32(at + 8);
+          return { name: ascii(at + 12, Math.max(0, len - 1)).trim() || null, space };
+        }
+        if (type === 'mluc') {                    // ICC v4: UTF-16BE records
+          if (u32(at + 8) === 0) break;
+          const len = u32(at + 20);
+          const strAt = at + u32(at + 24);
+          let name = '';
+          for (let j = 0; j + 1 < len && strAt + j + 1 < icc.length; j += 2) {
+            name += String.fromCharCode((icc[strAt + j] << 8) | icc[strAt + j + 1]);
+          }
+          return { name: name.replace(/\0/g, '').trim() || null, space };
+        }
+        if (type === 'text') {
+          return { name: ascii(at + 8, Math.max(0, size - 8)).replace(/\0/g, '').trim() || null, space };
+        }
+        break;
+      }
+      return { name: null, space };
+    }
+
+    /**
+     * Name every embedded ICC profile the document references, both the colour
+     * space profiles (/ICCBased) and the output intent's own profile
+     * (/DestOutputProfile).
+     *
+     * Never throws: an unreadable profile degrades to "(embedded ICC)", which
+     * is all the previous implementation could ever report.
+     *
+     * @param {Uint8Array} pdfBytes
+     * @returns {Promise<string[]>}  e.g. ["U.S. Web Coated (SWOP) v2 (CMYK)"]
+     */
+    async function readIccProfiles(pdfBytes) {
+      const names = [];
+      let found = false;
+
+      try {
+        const refs = [
+          ...findIndirectRefs(pdfBytes, '/DestOutputProfile', 2),
+          ...findIndirectRefs(pdfBytes, '/ICCBased', 6),
+        ];
+        found = refs.length > 0 || indexOfAscii(pdfBytes, '/ICCBased') !== -1;
+
+        for (const objNum of refs) {
+          const stream = await readStreamObject(pdfBytes, objNum);
+          if (!stream) continue;
+          const profile = parseIccProfile(stream);
+          if (!profile?.name) continue;
+          const label = profile.space ? `${profile.name} (${profile.space})` : profile.name;
+          if (!names.includes(label)) names.push(label);
+        }
+      } catch (err) {
+        console.warn('readIccProfiles error:', err);
+      }
+
+      if (names.length === 0 && found) names.push('(embedded ICC)');
+      return names;
+    }
+
+    /**
+     * Log, per field, which extraction path supplied the displayed value.
+     *
+     * The panel only has room for one "Metadata source" line, so when it says
+     * "pdfcpu + direct parsing (partial)" there is no way to tell from the UI
+     * which half produced which field. The console table says exactly that.
+     *
+     * @param {{provenance: Record<string,string>, source: string}} meta
+     */
+    function logMetaProvenance(meta) {
+      /** @type {Record<string, {source: string, value: string}>} */
+      const rows = {};
+      for (const [field, source] of Object.entries(meta.provenance)) {
+        const value = meta[field];
+        rows[field] = {
+          source,
+          value: Array.isArray(value)
+            ? (value.length > 0 ? value.join(', ') : '(none)')
+            : (value ?? '(none)'),
+        };
+      }
+      console.log(`[PDFhero] metadata source: ${meta.source}`);
+      console.table(rows);
     }
 
     /**
@@ -2186,8 +2550,12 @@
      *  3. If that succeeds, use its values (page size, page count, creator,
      *     PDF/X level from the document properties).
      *  4. For any field that is still missing (or on any WASM error), fill gaps
-     *     using parsePdfFallback(). Rendering intent and ICC profile names
-     *     always come from there — `pdfcpu info` does not report them.
+     *     using parsePdfFallback(). Output intent and ICC profile names always
+     *     come from direct parsing — `pdfcpu info` does not report them.
+     *
+     * Which path supplied each field is recorded in meta.provenance and logged
+     * to the console, because the panel's single "Metadata source" line cannot
+     * say that, say, the page size came from pdfcpu while the creator did not.
      *
      * All errors are caught — the function never throws.
      * Fields that cannot be extracted are returned as null.
@@ -2202,8 +2570,10 @@
      *   pageCount: number|null,
      *   creator: string|null,
      *   pdfXLevel: string|null,
-     *   renderingIntent: string|null,
-     *   iccProfiles: string[]
+     *   outputIntent: string|null,
+     *   iccProfiles: string[],
+     *   source: string,
+     *   provenance: Record<string, string>
      * }>}
      */
     async function extractMetadata(pdfBytes) {
@@ -2230,47 +2600,63 @@
 
       // ── Step 4: Fill from fallback ────────────────────────────────
       const fallback = parsePdfFallback(pdfBytes);
+      const iccProfiles = await readIccProfiles(pdfBytes);
 
-      // Helper: pick first non-null, non-undefined value
-      const pick = (...vals) => {
-        for (const v of vals) {
-          if (v !== null && v !== undefined && v !== '') return v;
-        }
+      /**
+       * Per-field record of where the displayed value came from.
+       * @type {Record<string, string>}
+       */
+      const provenance = {};
+
+      const isSet = (v) => v !== null && v !== undefined && v !== '';
+
+      /**
+       * pdfcpu values win; direct parsing fills whatever pdfcpu left out.
+       * Whichever one supplied the value is recorded against the field.
+       */
+      const take = (field, wasmValue, parsedValue) => {
+        if (isSet(wasmValue))   { provenance[field] = 'pdfcpu WASM';    return wasmValue; }
+        if (isSet(parsedValue)) { provenance[field] = 'direct parsing'; return parsedValue; }
+        provenance[field] = 'not found';
         return null;
       };
 
-      // pdfcpu values win; direct parsing fills whatever pdfcpu left out.
       // (pdfcpuInfoToMeta already normalised the field names.)
       const w = wasmMeta;
       const meta = {
-        width:           pick(w?.width,           fallback.width),
-        height:          pick(w?.height,          fallback.height),
-        pageCount:       pick(w?.pageCount,       fallback.pageCount),
-        creator:         pick(w?.creator,         fallback.creator),
-        pdfXLevel:       pick(w?.pdfXLevel,       fallback.pdfXLevel),
+        width:        take('width',     w?.width,     fallback.width),
+        height:       take('height',    w?.height,    fallback.height),
+        pageCount:    take('pageCount', w?.pageCount, fallback.pageCount),
+        creator:      take('creator',   w?.creator,   fallback.creator),
+        pdfXLevel:    take('pdfXLevel', w?.pdfXLevel, fallback.pdfXLevel),
         // `pdfcpu info` reports neither of these — always direct parsing.
-        renderingIntent: fallback.renderingIntent,
-        iccProfiles:     fallback.iccProfiles, // always an array (may be empty)
+        outputIntent: take('outputIntent', null, fallback.outputIntent),
+        iccProfiles,  // always an array (may be empty)
       };
+      provenance.iccProfiles = iccProfiles.length > 0
+        ? 'direct parsing (ICC stream)'
+        : 'not found';
 
       // Determine final source label:
       // If pdfcpu ran but direct parsing still supplied a displayed value,
-      // report both. Rendering intent and ICC profile names are never
-      // reported by `pdfcpu info`, so they only count against pdfcpu when
-      // direct parsing actually found something for them.
+      // report both. Output intent and ICC profile names are never reported by
+      // `pdfcpu info`, so they only count against pdfcpu when direct parsing
+      // actually found something for them.
       if (metaSource === 'pdfcpu') {
-        const camePdfcpu = (field) => w?.[field] != null && w[field] !== '';
+        const fromPdfcpu = (field) => provenance[field] === 'pdfcpu WASM';
         const wasmCoveredEverything =
-          camePdfcpu('width') && camePdfcpu('height') &&
-          camePdfcpu('pageCount') && camePdfcpu('creator') &&
-          (meta.pdfXLevel == null || camePdfcpu('pdfXLevel')) &&
-          meta.renderingIntent == null &&
+          fromPdfcpu('width') && fromPdfcpu('height') &&
+          fromPdfcpu('pageCount') && fromPdfcpu('creator') &&
+          (meta.pdfXLevel == null || fromPdfcpu('pdfXLevel')) &&
+          meta.outputIntent == null &&
           meta.iccProfiles.length === 0;
         if (!wasmCoveredEverything) {
           metaSource = 'pdfcpu + direct parsing (partial)';
         }
       }
       meta.source = metaSource;
+      meta.provenance = provenance;
+      logMetaProvenance(meta);
 
       // Populate AppState.meta
       AppState.meta = meta;
@@ -2333,6 +2719,7 @@
       }
       AppState.strokes.get(page).push(AppState.activeStroke);
       AppState.activeStroke = null;
+      updateSaveButton();
     }
 
     /**
@@ -2409,6 +2796,7 @@
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       redrawCanvas(ctx);
+      updateSaveButton();
     }
 
     /**
@@ -2428,6 +2816,7 @@
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       redrawCanvas(ctx);
+      updateSaveButton();
     }
 
     /**
@@ -2442,6 +2831,29 @@
       const canvas = document.getElementById('annotation-canvas');
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0, 0, canvas.width, canvas.height);
+      updateSaveButton();
+    }
+
+    /**
+     * True when at least one committed stroke exists on any page.
+     * @returns {boolean}
+     */
+    function hasAnnotations() {
+      for (const strokes of AppState.strokes.values()) {
+        if (strokes && strokes.length > 0) return true;
+      }
+      return false;
+    }
+
+    /**
+     * Saving only produces a different document once something has been drawn,
+     * so the button follows the stroke history the way the download button
+     * follows the screenshot stack. Call after anything that adds or removes
+     * strokes, and after loading a document.
+     */
+    function updateSaveButton() {
+      document.getElementById('btn-save').disabled =
+        AppState.pdfBytes == null || !hasAnnotations();
     }
 
     // ── About dialog ─────────────────────────────────────────────
@@ -2464,12 +2876,19 @@
 
     /**
      * Load a PDF document with PDF.js and store it in AppState.
+     *
+     * PDF.js hands `data` to its worker as a transferable, which detaches the
+     * ArrayBuffer on this side: AppState.pdfBytes would silently become zero
+     * length, and the next PDFDocument.load() for "Save with annotations"
+     * would fail with "No PDF header found". So the worker gets a copy and
+     * AppState.pdfBytes stays intact for pdf-lib.
+     *
      * @param {Uint8Array} pdfBytes
      * @returns {Promise<PDFDocumentProxy>}
      */
     async function loadPdf(pdfBytes) {
       try {
-        const doc = await pdfjsLib.getDocument({ data: pdfBytes }).promise;
+        const doc = await pdfjsLib.getDocument({ data: new Uint8Array(pdfBytes) }).promise;
         AppState.pdfJsDoc = doc;
         AppState.pageCount = doc.numPages;
         // Update the max value of start-page-input now that we know page count
@@ -2560,12 +2979,15 @@
         // 2. Store filename without extension
         AppState.originalFileName = file.name.replace(/\.pdf$/i, '');
 
-        // 3. Reset state — screenshots belong to the previous document
+        // 3. Reset state — screenshots and strokes belong to the previous document
         AppState.screenshots = [];
+        AppState.strokes.clear();
+        AppState.redoStack.clear();
         AppState.resumePage = 1;
 
         // 4. Update UI resets
         updateScreenshotButton();
+        updateSaveButton();
         document.getElementById('start-page-input').value = '1';
         document.getElementById('btn-present').disabled = true; // disable while loading
 
@@ -2590,8 +3012,8 @@
           meta.creator ?? 'N/A';
         document.getElementById('meta-pdfx').textContent =
           meta.pdfXLevel ?? 'N/A';
-        document.getElementById('meta-rendering-intent').textContent =
-          meta.renderingIntent ?? 'N/A';
+        document.getElementById('meta-output-intent').textContent =
+          meta.outputIntent ?? 'N/A';
         document.getElementById('meta-icc').textContent =
           meta.iccProfiles.length > 0 ? meta.iccProfiles.join(', ') : 'N/A';
         const metaSourceEl = document.getElementById('meta-source');
