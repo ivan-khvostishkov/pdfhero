@@ -92,9 +92,10 @@
       font-weight: 600;
     }
 
-    /* File input — visually hidden but still focusable, so the label below
-       can act as the control while the keyboard tab order is preserved. */
-    #file-input {
+    /* File inputs — visually hidden but still focusable, so the labels below
+       can act as the controls while the keyboard tab order is preserved. */
+    #file-input,
+    #image-input {
       position: absolute;
       width: 1px;
       height: 1px;
@@ -103,8 +104,8 @@
       clip: rect(0 0 0 0);
     }
 
-    /* Top action row: just the file picker, kept as a flex row so the label
-       that stands in for the hidden input aligns like a button. */
+    /* Top action row: the two ways in, kept as a flex row so the labels that
+       stand in for the hidden inputs align like buttons. */
     #file-row {
       display: flex;
       align-items: center;
@@ -129,9 +130,34 @@
 
     #btn-choose-file:hover { background: #c73850; }
 
+    /* The second way in: build a PDF out of images. An alternative to the
+       primary action rather than a rival, so it is outlined and a size down. */
+    #btn-choose-images {
+      background: transparent;
+      border: 1px solid #e94560;
+      color: #e94560;
+      border-radius: 6px;
+      padding: 8px 14px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s;
+    }
+
+    #btn-choose-images:hover { background: #e94560; color: #fff; }
+
+    /* While the PDF is being assembled the label must not accept another pick. */
+    #btn-choose-images.busy {
+      pointer-events: none;
+      opacity: 0.6;
+    }
+
     /* The real focus lands on the hidden input, so mirror the focus ring
        onto the label that stands in for it. */
-    #file-input:focus-visible + #btn-choose-file {
+    #file-input:focus-visible + #btn-choose-file,
+    #image-input:focus-visible + #btn-choose-images {
       outline: 2px solid #e0e0e0;
       outline-offset: 3px;
     }
@@ -265,10 +291,9 @@
       color: #e0e0e0;
     }
 
-    /* Trailing item of the present row, and a secondary one: pushed to the
-       right edge and a size down from the actions beside it. */
+    /* Last and least of the present row: a size down from the actions beside
+       it, but packed in with them at the left rather than pushed right. */
     #btn-download-screenshots {
-      margin-left: auto;
       font-size: 0.85rem;
     }
 
@@ -460,11 +485,15 @@
       <button id="btn-about">About</button>
     </div>
 
-    <!-- Top action row. The visually hidden input stays immediately before the
-         label that renders as its button. -->
+    <!-- Top action row: open a PDF, or build one out of images. Each visually
+         hidden input stays immediately before the label that renders as its
+         button. -->
     <div id="file-row">
       <input type="file" id="file-input" accept=".pdf" aria-label="Select a PDF file" />
       <label id="btn-choose-file" for="file-input">Choose PDF file</label>
+      <input type="file" id="image-input" accept="image/*" multiple
+             aria-label="Select images to combine into a PDF" />
+      <label id="btn-choose-images" for="image-input">Choose images</label>
     </div>
 
     <!-- Metadata panel (always visible) -->
@@ -1756,6 +1785,12 @@
       isPresenting: false,
       resumePage: 1,           // page number to resume from; updated on exit
       originalFileName: null,  // string | null — base name of selected file, without extension
+
+      // True when the loaded document was built here out of images rather than
+      // opened from a PDF. Saving it is then worthwhile on its own — that is
+      // the whole point of the images route — so the save button stays enabled
+      // with no annotations, which it never does for a PDF the user already has.
+      builtFromImages: false,
     };
 
     // ── Error helpers ─────────────────────────────────────────────
@@ -2904,14 +2939,25 @@
     }
 
     /**
-     * Saving only produces a different document once something has been drawn,
-     * so the button follows the stroke history the way the download button
-     * follows the screenshot stack. Call after anything that adds or removes
-     * strokes, and after loading a document.
+     * For a PDF the user opened, saving only produces a different document once
+     * something has been drawn, so the button follows the stroke history the
+     * way the download button follows the screenshot stack.
+     *
+     * A document built here from images is the exception: the file does not
+     * exist anywhere else yet, so saving it is the point and the button is
+     * enabled straight away, labelled just "Save". It becomes "Save with
+     * annotations" as soon as there is ink to carry.
+     *
+     * Call after anything that adds or removes strokes, and after loading a
+     * document.
      */
     function updateSaveButton() {
-      document.getElementById('btn-save').disabled =
-        AppState.pdfBytes == null || !hasAnnotations();
+      const btn = document.getElementById('btn-save');
+      const inked = hasAnnotations();
+      btn.disabled = AppState.pdfBytes == null || !(inked || AppState.builtFromImages);
+      btn.textContent = (AppState.builtFromImages && !inked)
+        ? 'Save'
+        : 'Save with annotations';
     }
 
     // ── About dialog ─────────────────────────────────────────────
@@ -3025,39 +3071,47 @@
     }
 
     // ── File load pipeline ─────────────────────────────────────────
-    document.getElementById('file-input').addEventListener('change', async (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
 
+    /**
+     * Take over as the loaded document: reset per-document state, fill the
+     * metadata panel, hand the bytes to PDF.js and enable presenting.
+     *
+     * Shared by both ways in — opening a PDF and building one from images — so
+     * that the two cannot drift apart in what they reset.
+     *
+     * @param {Uint8Array} pdfBytes
+     * @param {{displayName: string, baseName: string, builtFromImages?: boolean}} opts
+     *   displayName names the document in the panel header; baseName is the
+     *   stem used for downloads.
+     * @returns {Promise<void>}
+     */
+    async function openDocument(pdfBytes, opts) {
       try {
-        // 1. Read file as ArrayBuffer → Uint8Array
-        const arrayBuffer = await file.arrayBuffer();
-        AppState.pdfBytes = new Uint8Array(arrayBuffer);
+        AppState.pdfBytes = pdfBytes;
+        AppState.originalFileName = opts.baseName;
+        AppState.builtFromImages = opts.builtFromImages === true;
 
-        // 2. Store filename without extension
-        AppState.originalFileName = file.name.replace(/\.pdf$/i, '');
-
-        // 3. Reset state — screenshots and strokes belong to the previous document
+        // Screenshots and strokes belong to the previous document
         AppState.screenshots = [];
         AppState.strokes.clear();
         AppState.redoStack.clear();
         AppState.resumePage = 1;
 
-        // 4. Update UI resets
+        // UI resets
         updateScreenshotButton();
         updateSaveButton();
         document.getElementById('start-page-input').value = '1';
         document.getElementById('btn-present').disabled = true; // disable while loading
 
-        // 5. Panel header names the file (replaces "No file selected")
+        // Panel header names the document (replaces "No file selected")
         const filenameEl = document.getElementById('meta-filename');
-        filenameEl.textContent = file.name;
+        filenameEl.textContent = opts.displayName;
         filenameEl.classList.add('has-file');
 
-        // 6. Extract metadata
+        // Extract metadata
         const meta = await extractMetadata(AppState.pdfBytes);
 
-        // 7. Populate metadata panel
+        // Populate metadata panel
         document.getElementById('meta-size').textContent =
           (meta.width != null && meta.height != null)
             ? `${meta.width} × ${meta.height} pt`
@@ -3086,15 +3140,167 @@
           metaSourceEl.className = 'meta-source-partial';
         }
 
-        // 8. Load PDF with PDF.js
+        // Load PDF with PDF.js
         await loadPdf(AppState.pdfBytes);
 
-        // 9. Enable present button
+        // Ready to present
         document.getElementById('btn-present').disabled = false;
 
       } catch (err) {
         showError(`Failed to load PDF: ${err.message ?? err}`);
         document.getElementById('btn-present').disabled = true;
+      }
+    }
+
+    document.getElementById('file-input').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      // Clear the input so re-picking the same file fires change again.
+      e.target.value = '';
+      if (!file) return;
+
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      await openDocument(bytes, {
+        displayName: file.name,
+        baseName: file.name.replace(/\.pdf$/i, ''),
+      });
+    });
+
+    // ── Images → PDF ───────────────────────────────────────────────
+
+    /**
+     * Resolution at which image pixels are placed on the page: 300 dpi, the
+     * print standard, so 1 px becomes 72/300 pt. A 300 dpi image therefore
+     * comes out at its physical size and the PDF is print-ready.
+     */
+    const IMAGE_DPI = 300;
+
+    /**
+     * Longest side of a generated page, in points (1440 pt = 20 in). At 300
+     * dpi a page only reaches this if the image is over 6000 px, but such
+     * images exist, so the result is capped rather than producing a page a
+     * metre wide.
+     */
+    const IMAGE_PAGE_MAX_PT = 1440;
+
+    /**
+     * Re-encode an image the PDF format cannot carry directly (WebP, GIF, BMP,
+     * AVIF…) as PNG, by way of a canvas.
+     *
+     * @param {Blob} file
+     * @returns {Promise<Uint8Array>} PNG bytes
+     */
+    async function transcodeToPng(file) {
+      const bitmap = await createImageBitmap(file);
+      const canvas = document.createElement('canvas');
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      canvas.getContext('2d').drawImage(bitmap, 0, 0);
+      bitmap.close?.();
+      const blob = await new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error('PNG encoding failed'))),
+          'image/png'
+        );
+      });
+      return new Uint8Array(await blob.arrayBuffer());
+    }
+
+    /**
+     * Build a PDF with one page per image, each page the size of its image.
+     *
+     * pdf-lib embeds JPEG and PNG as-is; anything else is transcoded to PNG
+     * first, so what the file picker accepts and what ends up in the PDF stay
+     * the same set. A file that cannot be decoded at all is skipped rather
+     * than failing the whole batch.
+     *
+     * @param {File[]} files
+     * @returns {Promise<{bytes: Uint8Array, pages: number, skipped: string[]}>}
+     */
+    async function buildPdfFromImages(files) {
+      const { PDFDocument } = PDFLib;
+      const doc = await PDFDocument.create();
+      const skipped = [];
+
+      for (const file of files) {
+        try {
+          const bytes = new Uint8Array(await file.arrayBuffer());
+          const isJpeg = /^image\/jpe?g$/i.test(file.type) || /\.jpe?g$/i.test(file.name);
+          const isPng  = /^image\/png$/i.test(file.type)   || /\.png$/i.test(file.name);
+
+          let image = null;
+          try {
+            if (isJpeg)     image = await doc.embedJpg(bytes);
+            else if (isPng) image = await doc.embedPng(bytes);
+          } catch (err) {
+            // Variants pdf-lib cannot read directly — CMYK JPEG, interlaced or
+            // 16-bit PNG — still decode in the browser, so re-encode instead
+            // of dropping the image.
+            console.warn(`${file.name}: embedding the original failed, re-encoding as PNG`, err);
+          }
+          if (image === null) image = await doc.embedPng(await transcodeToPng(file));
+
+          // Pixels → points at IMAGE_DPI, then shrink further if the longest
+          // side would exceed the cap.
+          const scale = Math.min(
+            72 / IMAGE_DPI,
+            IMAGE_PAGE_MAX_PT / Math.max(image.width, image.height)
+          );
+          const w = image.width  * scale;
+          const h = image.height * scale;
+          const page = doc.addPage([w, h]);
+          page.drawImage(image, { x: 0, y: 0, width: w, height: h });
+        } catch (err) {
+          console.warn(`Skipping ${file.name}:`, err);
+          skipped.push(file.name);
+        }
+      }
+
+      const version = appVersion ? ` v${appVersion}` : '';
+      doc.setCreator(`PDFhero by NoSocial.Net${version}`);
+      doc.setProducer(`PDFhero by NoSocial.Net${version}`);
+      doc.setTitle(files.length === 1 ? files[0].name : `${files.length} images`);
+
+      return {
+        bytes: await doc.save(),
+        pages: doc.getPageCount(),
+        skipped,
+      };
+    }
+
+    document.getElementById('image-input').addEventListener('change', async (e) => {
+      const files = Array.from(e.target.files ?? []);
+      // Clear the input so re-picking the same images fires change again.
+      e.target.value = '';
+      if (files.length === 0) return;
+
+      const label = document.getElementById('btn-choose-images');
+      const labelText = label.textContent;
+      label.classList.add('busy');
+      label.textContent = 'Building PDF…';
+
+      try {
+        const { bytes, pages, skipped } = await buildPdfFromImages(files);
+        if (pages === 0) {
+          showError('None of the selected files could be read as an image.');
+          return;
+        }
+        if (skipped.length > 0) {
+          showError(`Skipped ${skipped.length} unreadable file(s): ${skipped.join(', ')}`);
+        }
+
+        const base = files.length === 1
+          ? files[0].name.replace(/\.[^.]+$/, '')
+          : 'images';
+        await openDocument(bytes, {
+          displayName: pages === 1 ? files[0].name : `${pages} images → PDF`,
+          baseName: base,
+          builtFromImages: true,
+        });
+      } catch (err) {
+        showError(`Could not build a PDF from those images: ${err.message ?? err}`);
+      } finally {
+        label.classList.remove('busy');
+        label.textContent = labelText;
       }
     });
 
@@ -3588,6 +3794,9 @@
 
     /**
      * Embed all strokes as vector paths into the PDF and trigger download.
+     *
+     * With no strokes it is a plain save, which is what the button does under
+     * its "Save" label for a document built from images.
      * @returns {Promise<void>}
      */
     async function saveWithAnnotations() {
