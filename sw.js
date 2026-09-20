@@ -4,7 +4,7 @@
 // The cache name is derived from it, index.html reads it back out of this
 // file (see appVersionPromise), and the release workflow names the
 // deployment bundle after it. Bump it here on every release — nowhere else.
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 const CACHE_NAME = `pdfhero-v${APP_VERSION}`;
 

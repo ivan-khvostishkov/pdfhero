@@ -68,6 +68,10 @@
       margin-bottom: 8px;
     }
 
+    /* Space the second heading (touch gestures) off the list above it. */
+    #shortcut-legend h2 + * { margin-top: 0; }
+    #shortcut-legend .shortcut-row + h2 { margin-top: 14px; }
+
     .shortcut-row {
       display: flex;
       gap: 8px;
@@ -273,11 +277,17 @@
       font-size: 0.9rem;
       pointer-events: none;
       opacity: 0;
-      transition: opacity 0.25s ease;
+      /* Hidden, not just transparent: an opacity-0 box is still a selectable
+         empty element, and a long press in presenter view would highlight it
+         as a stray blank line under the slide. */
+      visibility: hidden;
+      transition: opacity 0.25s ease, visibility 0.25s ease;
       z-index: 10;
+      user-select: none;
+      -webkit-user-select: none;
     }
 
-    #capture-toast.visible { opacity: 1; }
+    #capture-toast.visible { opacity: 1; visibility: visible; }
 
     @media (prefers-reduced-motion: reduce) {
       #capture-toast { transition: none; }
@@ -358,6 +368,12 @@
       display: none; /* toggled by JS */
       width: 100vw;
       height: 100vh;
+      /* iOS Safari cannot go fullscreen, and there 100vh counts the space
+         behind the browser toolbars — the slide is centred in a box taller
+         than the screen and its bottom edge sits under the toolbar. dvh is
+         the visible height, matching the window.innerHeight that renderPage
+         sizes the page to. */
+      height: 100dvh;
       background: #000;
       position: fixed;
       inset: 0;
@@ -365,6 +381,15 @@
       align-items: center;
       cursor: none; /* default hidden; crosshair shown on mousemove */
       overflow: hidden;
+
+      /* Touch hardening. Without these, a long press on iOS pops up the
+         image callout menu and selects the slide (plus any stray whitespace
+         around it) instead of letting the finger draw, and a drag on the
+         canvas pans/zooms the page rather than producing a stroke. */
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
+      touch-action: none;
     }
 
     #presenter.active {
@@ -373,19 +398,29 @@
 
     #slide-container {
       position: relative;
-      display: inline-block;
-      line-height: 0; /* collapse inline-block gap */
+      /* flex, not inline-block: a flex container drops whitespace-only text
+         nodes entirely, so the newlines between the two <canvas> tags cannot
+         render as a selectable blank line under the slide. */
+      display: flex;
+      line-height: 0;
+      font-size: 0;
     }
 
-    #pdf-canvas {
+    #pdf-canvas,
+    #annotation-canvas {
       display: block;
       max-width: 100vw;
       max-height: 100vh;
-      object-fit: contain; /* Ensures aspect ratio is preserved */
+      max-height: 100dvh;
+      object-fit: contain; /* preserves the aspect ratio */
       image-rendering: auto;
       image-rendering: high-quality;
       image-rendering: -webkit-optimize-contrast;
       image-rendering: smooth;
+      touch-action: none;  /* deliver touch drags to the stroke handlers */
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-touch-callout: none;
     }
 
     #annotation-canvas {
@@ -393,13 +428,6 @@
       top: 0;
       left: 0;
       cursor: none; /* updated to crosshair on mousemove, back to none on mousedown */
-      max-width: 100vw;
-      max-height: 100vh;
-      object-fit: contain;
-      image-rendering: auto;
-      image-rendering: high-quality;
-      image-rendering: -webkit-optimize-contrast;
-      image-rendering: smooth;
     }
   </style>
 </head>
@@ -456,6 +484,15 @@
       <div class="shortcut-row"><span class="shortcut-key">E</span><span>Erase all annotations</span></div>
       <div class="shortcut-row"><span class="shortcut-key">U / Z</span><span>Undo / redo last stroke</span></div>
       <div class="shortcut-row"><span class="shortcut-key">S</span><span>Capture screenshot (adds to the download stack)</span></div>
+
+      <!-- Touch devices have no keyboard: the black margin around the slide
+           carries the same actions as the keys above. -->
+      <h2>Touch gestures (presenter view)</h2>
+      <div class="shortcut-row"><span class="shortcut-key">Drag on page</span><span>Draw with your finger or a stylus</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Tap left edge</span><span>Previous page (left fifth of the black area)</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Tap right edge</span><span>Next page (right fifth of the black area)</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Long press</span><span>Capture screenshot (anywhere on the black area)</span></div>
+      <div class="shortcut-row"><span class="shortcut-key">Double tap</span><span>Exit presenter view (middle of the black area, not the paging edges)</span></div>
     </div>
 
   </section>
@@ -2681,6 +2718,11 @@
         points: [{ x, y }],
         color: '#FF0000',
         lineWidth: 3,
+        // Size of the canvas the points were captured on. Saving has to map
+        // them back to PDF points, and the canvas is sized to the viewport,
+        // not to the page — without this the mapping is guesswork.
+        canvasWidth:  annotationCanvas.width,
+        canvasHeight: annotationCanvas.height,
       };
     }
 
@@ -3236,37 +3278,176 @@
       AppState.cursorHideTimer = setTimeout(hidePresenterCursor, 2000);
     }
 
-    annotationCanvas.addEventListener('mousemove', (e) => {
-      showCursorTemporarily();
-      if (AppState.activeStroke) {
-        const scale = annotationCanvas.width / annotationCanvas.offsetWidth;
-        continueStroke(e.offsetX * scale, e.offsetY * scale);
+    /**
+     * Convert a pointer event to annotation-canvas pixel coordinates.
+     *
+     * Uses getBoundingClientRect rather than offsetX/offsetY: once the canvas
+     * captures the pointer (needed so a finger that strays off the slide keeps
+     * drawing) the offset* values are no longer reliable across browsers.
+     *
+     * @param {PointerEvent} e
+     * @returns {{x: number, y: number}}
+     */
+    function canvasPointFromEvent(e) {
+      const rect = annotationCanvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) * (annotationCanvas.width  / rect.width),
+        y: (e.clientY - rect.top)  * (annotationCanvas.height / rect.height),
+      };
+    }
+
+    /**
+     * id of the pointer currently drawing, so a second finger landing on the
+     * slide mid-stroke does not hijack or fork the line.
+     * @type {number|null}
+     */
+    let drawingPointerId = null;
+
+    // Pointer events, not mouse events: the same handlers then serve mouse,
+    // finger and stylus, which is what makes annotation work on mobile.
+    annotationCanvas.addEventListener('pointerdown', (e) => {
+      if (drawingPointerId !== null) return;      // already drawing
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      drawingPointerId = e.pointerId;
+      // Keep receiving moves even if the finger leaves the slide area.
+      try { annotationCanvas.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+      e.preventDefault();
+      const p = canvasPointFromEvent(e);
+      beginStroke(p.x, p.y);
+    });
+
+    annotationCanvas.addEventListener('pointermove', (e) => {
+      if (e.pointerType === 'mouse') showCursorTemporarily();
+      if (drawingPointerId !== e.pointerId || !AppState.activeStroke) return;
+      e.preventDefault();
+      // Coalesced events recover the intermediate positions a fast swipe
+      // produces between frames, so quick strokes stay curved, not polygonal.
+      const events = typeof e.getCoalescedEvents === 'function'
+        ? (e.getCoalescedEvents() || [])
+        : [];
+      const points = (events.length > 0 ? events : [e]).map(canvasPointFromEvent);
+      // Only the final sample repaints: continueStroke redraws the whole
+      // canvas, so calling it per sample would cost several repaints a frame.
+      for (const p of points.slice(0, -1)) AppState.activeStroke.points.push(p);
+      const last = points[points.length - 1];
+      continueStroke(last.x, last.y);
+    });
+
+    /** Finalise the stroke and release the pointer. */
+    function finishDrawing(e) {
+      if (e && drawingPointerId !== e.pointerId) return;
+      if (e) {
+        try { annotationCanvas.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+      }
+      drawingPointerId = null;
+      if (AppState.activeStroke) endStroke();
+    }
+
+    annotationCanvas.addEventListener('pointerup', finishDrawing);
+    annotationCanvas.addEventListener('pointercancel', finishDrawing);
+
+    // If the pointer is released outside the canvas (or the browser takes the
+    // gesture away), finalise any active stroke so it is not left dangling.
+    window.addEventListener('pointerup', () => {
+      if (AppState.activeStroke) finishDrawing(null);
+    });
+    window.addEventListener('pointercancel', () => {
+      if (AppState.activeStroke) finishDrawing(null);
+    });
+
+    // ── PresenterModule — background tap gestures ────────────────
+    //
+    // Touch devices have no keyboard, so the black margin around the slide
+    // carries the presenter controls: the outer fifths page back and forward,
+    // a long press screenshots, and a double tap in the middle band exits.
+    // Only events whose target is the background itself count — anything on
+    // the slide belongs to drawing. Mouse clicks work the same way; the
+    // keyboard shortcuts remain the faster route on a desktop.
+
+    /** Fraction of the window width on each side that navigates. */
+    const NAV_ZONE = 0.2;
+    /** Press duration that counts as "long" (screenshot), in ms. */
+    const LONG_PRESS_MS = 550;
+    /** Maximum gap between two taps to count as a double tap, in ms. */
+    const DOUBLE_TAP_MS = 320;
+    /** Movement that turns a tap into a drag and cancels it, in CSS px. */
+    const TAP_SLOP = 12;
+
+    /** @type {{id: number, x: number, y: number, consumed: boolean}|null} */
+    let bgTap = null;
+    let longPressTimer = null;
+    let lastTapTime = 0;
+
+    const isBackground = (target) =>
+      target === presenterSection || target === document.getElementById('slide-container');
+
+    function cancelLongPress() {
+      if (longPressTimer !== null) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    }
+
+    presenterSection.addEventListener('pointerdown', (e) => {
+      if (!AppState.isPresenting || !isBackground(e.target)) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      bgTap = { id: e.pointerId, x: e.clientX, y: e.clientY, consumed: false };
+      cancelLongPress();
+      longPressTimer = setTimeout(() => {
+        longPressTimer = null;
+        if (bgTap === null) return;
+        bgTap.consumed = true;             // suppress the tap/double-tap
+        captureScreenshot(pdfCanvas, annotationCanvas);
+      }, LONG_PRESS_MS);
+    });
+
+    presenterSection.addEventListener('pointermove', (e) => {
+      if (bgTap === null || bgTap.id !== e.pointerId) return;
+      if (Math.abs(e.clientX - bgTap.x) > TAP_SLOP ||
+          Math.abs(e.clientY - bgTap.y) > TAP_SLOP) {
+        cancelLongPress();
+        bgTap = null;                       // a drag, not a tap
       }
     });
 
-    annotationCanvas.addEventListener('mousedown', (e) => {
-      const scale = annotationCanvas.width / annotationCanvas.offsetWidth;
-      beginStroke(e.offsetX * scale, e.offsetY * scale);
-    });
+    presenterSection.addEventListener('pointerup', (e) => {
+      if (bgTap === null || bgTap.id !== e.pointerId) return;
+      const tap = bgTap;
+      bgTap = null;
+      cancelLongPress();
+      if (tap.consumed) return;             // the long press already acted
 
-    annotationCanvas.addEventListener('mouseup', () => {
-      endStroke();
-      // cursor stays hidden after mouseup
-    });
+      // Which band of the window the tap landed in decides the action.
+      const fraction = e.clientX / window.innerWidth;
+      const delta = fraction <= NAV_ZONE ? -1 : (fraction >= 1 - NAV_ZONE ? +1 : 0);
 
-    // If the pointer is released outside the canvas, finalise any active stroke
-    // so it is not left dangling when the user re-enters the canvas.
-    window.addEventListener('mouseup', () => {
-      if (AppState.activeStroke) {
-        endStroke();
+      if (delta !== 0) {
+        // Page turns fire immediately, and the edge bands deliberately do not
+        // listen for a double tap: paging twice in quick succession is normal,
+        // and must never be read as "leave the presentation".
+        lastTapTime = 0;
+        navigatePage(delta);
+        return;
       }
+
+      // Middle band: a second tap inside the double-tap window exits.
+      const now = Date.now();
+      if (now - lastTapTime < DOUBLE_TAP_MS) {
+        lastTapTime = 0;
+        exitPresenterView();
+        return;
+      }
+      lastTapTime = now;
     });
 
-    // Finalise an in-progress stroke if the cursor leaves the canvas mid-draw.
-    annotationCanvas.addEventListener('mouseleave', () => {
-      if (AppState.activeStroke) {
-        endStroke();
-      }
+    presenterSection.addEventListener('pointercancel', () => {
+      cancelLongPress();
+      bgTap = null;
+    });
+
+    // Suppress the iOS long-press callout / selection menu over the slide.
+    presenterSection.addEventListener('contextmenu', (e) => {
+      if (AppState.isPresenting) e.preventDefault();
     });
 
     // ── ScreenshotModule ──────────────────────────────────────────
@@ -3379,7 +3560,7 @@
         return;
       }
       try {
-        const { PDFDocument, rgb } = PDFLib;
+        const { PDFDocument, rgb, LineCapStyle } = PDFLib;
         const doc = await PDFDocument.load(AppState.pdfBytes);
         const pages = doc.getPages();
 
@@ -3387,23 +3568,55 @@
           if (!strokes || strokes.length === 0) continue;
           const page = pages[pageNum - 1];
           if (!page) continue;
-          const { width: pdfW, height: pdfH } = page.getSize();
-          // Canvas was rendered at scale 1.0, so canvas pixel dimensions equal
-          // PDF point dimensions for each page. Use pdfW/pdfH directly so that
-          // coordinate mapping is correct even for pages that are not currently
-          // rendered in pdfCanvas (e.g. saving from landing page, multi-page PDFs
-          // with different page sizes).
-          const cW = pdfW;
-          const cH = pdfH;
+          // The CropBox, not the page size: that is the region PDF.js renders
+          // (so it is what the strokes were drawn over), and its lower-left
+          // corner is not necessarily the origin — print PDFs often crop
+          // inside a larger MediaBox with bleed.
+          const view = page.getCropBox();
+          const vW = view.width;
+          const vH = view.height;
+          const rotation = ((page.getRotation().angle % 360) + 360) % 360;
+
+          /**
+           * Map a point on the rendered canvas, given as the fractions (u, v)
+           * of the canvas width and height, into the SVG space used below.
+           *
+           * PDF.js applies the page's /Rotate when rendering, so the canvas
+           * shows the rotated page while pdf-lib draws in unrotated page
+           * space. On a rotated page the canvas axes are therefore swapped or
+           * reversed relative to the page's own.
+           */
+          const toSvgPoint = (u, v) => {
+            switch (rotation) {
+              case 90:  return { x: v * vW,       y: (1 - u) * vH };
+              case 180: return { x: (1 - u) * vW, y: (1 - v) * vH };
+              case 270: return { x: (1 - v) * vW, y: u * vH };
+              default:  return { x: u * vW,       y: v * vH };
+            }
+          };
 
           for (const stroke of strokes) {
             if (stroke.points.length < 2) continue;
-            const pts = stroke.points.map(p => ({
-              x:  (p.x / cW) * pdfW,
-              y:  pdfH - (p.y / cH) * pdfH,   // flip y-axis
-            }));
 
-            // Build SVG-style path string
+            // The canvas is sized to fit the viewport, so its dimensions do
+            // not equal the page's: use the size recorded when the stroke was
+            // drawn to normalise each point first.
+            const cW = stroke.canvasWidth  || vW;
+            const cH = stroke.canvasHeight || vH;
+            const pts = stroke.points.map(p => toSvgPoint(p.x / cW, p.y / cH));
+            // Canvas pixels → points, for the line weight. The canvas keeps
+            // the page's aspect ratio, so one factor covers both axes.
+            const lineScale = (rotation === 90 || rotation === 270)
+              ? vH / cW
+              : vW / cW;
+
+            // Build the path in SVG coordinates — y growing downward, same as
+            // the canvas. pdf-lib performs the flip itself (drawSvgPath emits
+            // translate(x, y) followed by scale(1, -1)), so the anchor has to
+            // be the top-left corner of the CropBox. Flipping the points here
+            // as well, with the anchor left at its (0, 0) default, put every
+            // stroke below the bottom edge of the page — which is why saved
+            // files came out with no visible ink.
             let d = `M ${pts[0].x} ${pts[0].y}`;
             for (let i = 1; i < pts.length - 1; i++) {
               const mx = (pts[i].x + pts[i + 1].x) / 2;
@@ -3419,10 +3632,14 @@
             const b = parseInt(hex.substring(4, 6), 16) / 255;
 
             page.drawSvgPath(d, {
+              x: view.x,
+              y: view.y + vH,
               borderColor: rgb(r, g, b),
-              borderWidth: stroke.lineWidth ?? 3,
+              // Scale the width with the page so the line keeps the weight it
+              // had on screen.
+              borderWidth: (stroke.lineWidth ?? 3) * lineScale,
               borderOpacity: 1,
-              opacity: 0,   // fill transparent
+              borderLineCap: LineCapStyle.Round,
             });
           }
         }
