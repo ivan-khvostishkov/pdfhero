@@ -34,7 +34,10 @@
       display: flex;
       flex-direction: column;
       gap: 16px;
-      max-width: 680px;
+      /* Wide enough that the four items of #present-controls — present, start
+         page, save, download — still sit on one line once the screenshot
+         count grows the last label. */
+      max-width: 740px;
       margin: 0 auto;
       padding: 32px 24px 48px;
     }
@@ -100,13 +103,13 @@
       clip: rect(0 0 0 0);
     }
 
-    /* Top action row. #btn-download-screenshots is pushed to the far right
-       (see its own rule) so the row reads primary action → stack download. */
+    /* Top action row: just the file picker, kept as a flex row so the label
+       that stands in for the hidden input aligns like a button. */
     #file-row {
       display: flex;
       align-items: center;
       gap: 12px;
-      flex-wrap: wrap;   /* narrow viewports: the download drops to its own line */
+      flex-wrap: wrap;
     }
 
     /* Primary action. A <label> rather than a <button> because it has to
@@ -183,13 +186,25 @@
     .meta-source-fallback { color: #e0a040; }  /* amber: direct parsing only */
     .meta-source-partial  { color: #b0b040; }  /* yellow: mixed */
 
-    /* Present controls row */
+    /* Present controls row: present → start page → save → download, all on one
+       line. The paddings and the page field are sized so the four items still
+       fit the column; wrapping stays enabled as a fallback for phones. */
     #present-controls {
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
     }
+
+    /* Never let a label break across two lines mid-row, and never let a button
+       give up width — the row wraps as a whole instead. */
+    #present-controls button,
+    #present-controls label {
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+
+    #present-controls button { padding: 8px 14px; }
 
     #present-controls label {
       color: #aaa;
@@ -197,7 +212,7 @@
     }
 
     #start-page-input {
-      width: 70px;
+      width: 58px;
       padding: 6px 8px;
       background: #16213e;
       border: 1px solid #0f3460;
@@ -250,13 +265,14 @@
       color: #e0e0e0;
     }
 
-    /* Trailing item of the top row, and a secondary one: right-aligned and a
-       size down from #btn-choose-file next to it. */
+    /* Trailing item of the present row, and a secondary one: pushed to the
+       right edge and a size down from the actions beside it. */
     #btn-download-screenshots {
       margin-left: auto;
-      padding: 9px 14px;
       font-size: 0.85rem;
     }
+
+    #present-controls #btn-download-screenshots { padding: 9px 12px; }
 
     #btn-save:hover { background: #1a4a7a; }
     #btn-download-screenshots:not(:disabled):hover { background: #1a4a7a; }
@@ -444,13 +460,11 @@
       <button id="btn-about">About</button>
     </div>
 
-    <!-- Top action row: the primary action on the left, the screenshot stack
-         on the right. The visually hidden input stays immediately before the
+    <!-- Top action row. The visually hidden input stays immediately before the
          label that renders as its button. -->
     <div id="file-row">
       <input type="file" id="file-input" accept=".pdf" aria-label="Select a PDF file" />
       <label id="btn-choose-file" for="file-input">Choose PDF file</label>
-      <button id="btn-download-screenshots" disabled>Download screenshots</button>
     </div>
 
     <!-- Metadata panel (always visible) -->
@@ -466,12 +480,14 @@
       <div class="meta-row"><span class="meta-label">Metadata source</span><span id="meta-source"></span></div>
     </div>
 
-    <!-- Present controls: the action, the page it starts on, then saving -->
+    <!-- Present controls: the action, the page it starts on, then the two
+         outputs — saving the annotated PDF and the screenshot stack. -->
     <div id="present-controls">
       <button id="btn-present" disabled>Present as a hero</button>
       <label for="start-page-input">Start page:</label>
       <input type="number" id="start-page-input" value="1" min="1" aria-label="Start page number" />
       <button id="btn-save" disabled>Save with annotations</button>
+      <button id="btn-download-screenshots" disabled>Download screenshots</button>
     </div>
 
     <!-- Shortcut legend — moved after the metadata / present block -->
