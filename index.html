@@ -397,6 +397,37 @@
       line-height: 1.7;
     }
 
+    #about-dialog .about-contact { font-size: 0.9rem; }
+
+    /* Scoped to the contact line: a bare `#about-dialog a` would outrank
+       #btn-donate below and paint its label accent-on-accent. */
+    #about-dialog .about-contact a { color: #e94560; }
+
+    #about-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* An anchor wearing the button styling: the base `button` rule cannot
+       reach it, so repeat the geometry here. */
+    #btn-donate {
+      padding: 8px 18px;
+      border-radius: 6px;
+      background: #e94560;
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 500;
+      /* The body's 1.5 would make it a few pixels taller than the real button
+         beside it; buttons render at roughly normal line-height. */
+      line-height: 1.2;
+      text-decoration: none;
+      white-space: nowrap;
+      transition: background 0.15s;
+    }
+
+    #btn-donate:hover { background: #ff5975; }
+
     #btn-about-close {
       background: #0f3460;
       color: #e0e0e0;
@@ -560,7 +591,22 @@
       Created together with Kiro.<br>
       <span id="about-version"></span>
     </p>
-    <button id="btn-about-close">Close</button>
+    <p class="about-contact">
+      Questions, bugs, ideas:
+      <a href="mailto:pdfhero@nosocial.net">pdfhero@nosocial.net</a>
+    </p>
+    <!-- Donate leads off-site, so it is an anchor rather than a button, and
+         opens in a new tab: presenting is the point of the app and losing the
+         loaded document to a navigation would be a poor trade for a tip. -->
+    <div id="about-actions">
+      <a id="btn-donate"
+         href="https://github.com/sponsors/ivan-khvostishkov"
+         target="_blank" rel="noopener noreferrer">Donate</a>
+      <!-- autofocus so the dialog still opens with Close focused: Donate now
+           comes first in the markup, and Enter must not fire an off-site link
+           the reader never aimed at. -->
+      <button id="btn-about-close" autofocus>Close</button>
+    </div>
   </dialog>
 
   <!-- ── CDN libraries ──────────────────────────────────────────── -->
