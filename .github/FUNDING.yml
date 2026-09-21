@@ -1,0 +1,10 @@
+# Puts a "Sponsor" button on the repository page, next to Watch and Fork.
+# Same destination as the Donate button in the app's About dialog, so there is
+# one place to be supported from either side.
+#
+# GitHub only renders the button once Sponsors is enabled on the account —
+# until then this file is inert, not an error. Other platforms are supported
+# too (patreon, ko_fi, buy_me_a_coffee, liberapay, open_collective, tidelift,
+# polar, thanks_dev, custom: [url, url]); add one and it appears in the same
+# dropdown.
+github: [ivan-khvostishkov]
